@@ -1,0 +1,9 @@
+{
+  "name": "Sheet Music Player",
+  "short_name": "Sheet Music",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#eeece6",
+  "theme_color": "#f6f4ef",
+  "icons": [{ "src": "icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }]
+}
