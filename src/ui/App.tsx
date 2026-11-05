@@ -5,7 +5,11 @@ import { ScanView } from './ScanView';
 import { Library } from './Library';
 import { EditPalette, EditAction } from './EditPalette';
 import { Transport } from './Transport';
-import { InfoPanel, MeasurePanel, PartsPanel, SettingsPanel, TransposePanel, Sheet } from './Panels';
+import { ChordsPanel, InfoPanel, MeasurePanel, PartsPanel, SettingsPanel, TransposePanel, Sheet } from './Panels';
+import { PrintView } from './PrintView';
+import { PerformView } from './PerformView';
+import { FindMusic } from './FindMusic';
+import { importFile as importAnyFile } from '../importers';
 import { useScoreStore } from './useScoreStore';
 import { engine } from '../audio/engine';
 import { buildPlan, PlaybackPlan } from '../model/playback';
@@ -20,10 +24,10 @@ import {
   updateMeasure, verticalNeighbor,
 } from '../model/edit';
 import { DEFAULT_SETTINGS, Settings, deleteScore, listLibrary, loadScore, loadSettings, saveScore, saveSettings } from '../storage';
-import { serverHasKey } from '../omr/client';
+import { serverInfo } from '../omr/client';
 import { demoScore } from '../demo';
 
-type Panel = null | 'parts' | 'transpose' | 'info' | 'settings' | 'measure' | 'export' | 'help';
+type Panel = null | 'parts' | 'transpose' | 'info' | 'settings' | 'measure' | 'export' | 'help' | 'chords';
 type PlayState = 'stopped' | 'playing' | 'paused';
 
 function download(name: string, data: BlobPart, type: string) {
@@ -49,7 +53,9 @@ function fmtTime(sec: number) {
 export function App() {
   const store = useScoreStore();
   const score = store.score;
-  const [view, setView] = useState<'library' | 'scan' | 'score'>('library');
+  const [view, setView] = useState<'library' | 'scan' | 'score' | 'print' | 'perform' | 'find'>('library');
+  const [scanFiles, setScanFiles] = useState<File[] | undefined>(undefined);
+  const [audiveris, setAudiveris] = useState(false);
   const [settings, setSettingsState] = useState<Settings>(loadSettings);
   const [library, setLibrary] = useState(listLibrary);
   const [sel, setSel] = useState<Selection | null>(null);
@@ -75,7 +81,10 @@ export function App() {
   const clipboard = useRef<Measure[] | null>(null);
 
   useEffect(() => {
-    void serverHasKey().then(setServerKey);
+    void serverInfo().then((i) => {
+      setServerKey(i.serverKey);
+      setAudiveris(i.audiveris);
+    });
   }, []);
 
   const setSettings = useCallback((s: Settings) => {
@@ -505,13 +514,19 @@ export function App() {
   // ---------------- import / export ----------------
   const importFile = async (f: File) => {
     try {
-      const data = JSON.parse(await f.text()) as Score;
-      if (!data || !Array.isArray(data.measures) || !Array.isArray(data.parts)) throw new Error('bad');
-      const s: Score = { ...data, id: loadScore(data.id) ? newId('s') : data.id || newId('s'), updated: Date.now() };
-      openScore(s);
-      flash('Imported');
-    } catch {
-      flash('That file is not a Sheet Music Player score (.json).');
+      flash('Opening…');
+      const r = await importAnyFile(f);
+      if (r.kind === 'images') {
+        setScanFiles(r.files);
+        setView('scan');
+        return;
+      }
+      r.scores.forEach((s) => saveScore(s));
+      setLibrary(listLibrary());
+      openScore(r.scores[0]);
+      flash(r.scores.length > 1 ? `Imported ${r.scores.length} pieces` : 'Imported');
+    } catch (e) {
+      flash(e instanceof Error ? e.message : 'Could not open that file.');
     }
   };
 
@@ -522,7 +537,10 @@ export function App() {
     if (kind === 'musicxml') download(`${name}.musicxml`, toMusicXML(score, { includeHidden: true }).xml, 'application/vnd.recordare.musicxml+xml');
     if (kind === 'midi') download(`${name}.mid`, toMidi(score, buildPlan(score, { humanize: false })) as BlobPart, 'audio/midi');
     if (kind === 'json') download(`${name}.smp.json`, JSON.stringify(score), 'application/json');
-    if (kind === 'print') setTimeout(() => window.print(), 50);
+    if (kind === 'print') {
+      stop();
+      setView('print');
+    }
   };
 
   // ---------------- render ----------------
@@ -530,28 +548,45 @@ export function App() {
     return (
       <>
         <ScanView
+          initialFiles={scanFiles}
           settings={settings}
           onSettings={setSettings}
-          onCancel={() => setView(score ? 'score' : 'library')}
+          onCancel={() => { setScanFiles(undefined); setView(score ? 'score' : 'library'); }}
           onNeedKey={() => setPanel('settings')}
           onDone={(scores) => {
+            setScanFiles(undefined);
             scores.forEach((s) => saveScore(s));
             setLibrary(listLibrary());
             openScore(scores[0]);
             if (scores.length > 1) flash(`${scores.length} pieces saved to your library`);
           }}
         />
-        {panel === 'settings' && <SettingsPanel settings={settings} onChange={setSettings} onClose={() => setPanel(null)} serverKey={serverKey} />}
+        {panel === 'settings' && <SettingsPanel settings={settings} onChange={setSettings} onClose={() => setPanel(null)} serverKey={serverKey} audiveris={audiveris} />}
       </>
     );
   }
+
+  if (view === 'find') {
+    return (
+      <>
+        <FindMusic onBack={() => setView('library')} onOpen={(s) => { saveScore(s); setLibrary(listLibrary()); openScore(s); }} onImportFile={importFile} />
+        {toast && <div className="toast">{toast}</div>}
+      </>
+    );
+  }
+
+  if (view === 'print' && score) return <PrintView score={score} onBack={() => setView('score')} />;
+
+  if (view === 'perform' && score)
+    return <PerformView score={score} settings={settings} startMeasure={sel?.m0} onExit={() => setView('score')} />;
 
   if (view === 'library' || !score) {
     return (
       <>
         <Library
           entries={library}
-          needsKey={!serverKey && !settings.apiKey}
+          needsKey={settings.engine === 'claude' ? !serverKey && !settings.apiKey : settings.engine === 'compat' ? !settings.compatKey : !audiveris}
+          onFind={() => setView('find')}
           onOpen={(id) => {
             const s = loadScore(id);
             if (s) openScore(s);
@@ -561,12 +596,12 @@ export function App() {
             deleteScore(id);
             setLibrary(listLibrary());
           }}
-          onScan={() => setView('scan')}
+          onScan={() => { setScanFiles(undefined); setView('scan'); }}
           onDemo={() => openScore(demoScore())}
           onImport={importFile}
           onSettings={() => setPanel('settings')}
         />
-        {panel === 'settings' && <SettingsPanel settings={settings} onChange={setSettings} onClose={() => setPanel(null)} serverKey={serverKey} />}
+        {panel === 'settings' && <SettingsPanel settings={settings} onChange={setSettings} onClose={() => setPanel(null)} serverKey={serverKey} audiveris={audiveris} />}
         {toast && <div className="toast">{toast}</div>}
       </>
     );
@@ -594,6 +629,9 @@ export function App() {
         <button className={`btn sm ${editMode ? 'primary' : ''}`} onClick={() => { setEditMode((x) => !x); setSel(null); if (engine.state !== 'playing') viewRef.current?.setPlaying(new Set(), null, false); }} aria-pressed={editMode} aria-label={editMode ? 'Done editing' : 'Edit'}>
           <Icon.edit size={16} /> <span className="hide-xs">{editMode ? 'Done' : 'Edit'}</span>
         </button>
+        <button className="btn sm accent-soft" onClick={() => { stop(); setView('perform'); }} aria-label="Play along" title="Play along on your piano">
+          <Icon.keyboard size={16} /> <span className="hide-xs">Play along</span>
+        </button>
         <button className="icon-btn" onClick={() => setPanel('transpose')} aria-label="Transpose" title="Transpose"><Icon.transpose /></button>
         <button className="icon-btn" onClick={() => setPanel('parts')} aria-label="Parts and sound" title="Parts & sound"><Icon.mixer /></button>
         <div className="menu-wrap">
@@ -602,11 +640,12 @@ export function App() {
             <div className="menu" onMouseLeave={() => setMoreOpen(false)}>
               <button onClick={() => { setMoreOpen(false); setView('scan'); }}><Icon.camera size={16} /> Scan new music</button>
               <button onClick={() => { setMoreOpen(false); setPanel('info'); }}><Icon.info size={16} /> Score details</button>
+              <button onClick={() => { setMoreOpen(false); setPanel('chords'); }}><Icon.music size={16} /> Chord symbols…</button>
               <div className="menu-sep" />
               <button onClick={() => exportAs('musicxml')}><Icon.download size={16} /> Export MusicXML</button>
               <button onClick={() => exportAs('midi')}><Icon.download size={16} /> Export MIDI</button>
               <button onClick={() => exportAs('json')}><Icon.download size={16} /> Save file (.json)</button>
-              <button onClick={() => exportAs('print')}><Icon.download size={16} /> Print / PDF</button>
+              <button onClick={() => exportAs('print')}><Icon.download size={16} /> Print / PDF…</button>
               <div className="menu-sep" />
               <button onClick={() => { setSettings({ ...settings, zoom: Math.min(2, +(zoom + 0.1).toFixed(2)) }); }}><Icon.zoomIn size={16} /> Zoom in</button>
               <button onClick={() => { setSettings({ ...settings, zoom: Math.max(0.35, +(zoom - 0.1).toFixed(2)) }); }}><Icon.zoomOut size={16} /> Zoom out</button>
@@ -622,7 +661,15 @@ export function App() {
       {notesOpen && score.notes && score.notes.length > 0 && !editMode && (
         <div className="banner">
           <div className="banner-text">
-            <strong>Scanned by Claude — give it a listen and fix anything that's off.</strong>
+            <strong>
+              {score.source === 'claude'
+                ? 'Scanned by Claude — give it a listen and fix anything that’s off.'
+                : score.source === 'compat'
+                  ? 'Scanned by an AI model — give it a listen and fix anything that’s off.'
+                  : score.source === 'audiveris'
+                    ? 'Scanned with Audiveris — give it a listen and fix anything that’s off.'
+                    : 'About this score:'}
+            </strong>
             <span> {score.notes[0]}{score.notes.length > 1 ? ` (+${score.notes.length - 1} more)` : ''}</span>
           </div>
           <button className="btn sm" onClick={() => setPanel('info')}>Details</button>
@@ -666,8 +713,17 @@ export function App() {
       {panel === 'parts' && <PartsPanel score={score} onChange={(s, record) => store.set(s, { record })} onClose={() => setPanel(null)} />}
       {panel === 'transpose' && <TransposePanel score={score} onApply={(s) => { commit(s); flash('Transposed'); }} onClose={() => setPanel(null)} />}
       {panel === 'info' && <InfoPanel score={score} onChange={commit} onClose={() => setPanel(null)} />}
-      {panel === 'settings' && <SettingsPanel settings={settings} onChange={setSettings} onClose={() => setPanel(null)} serverKey={serverKey} />}
+      {panel === 'settings' && <SettingsPanel settings={settings} onChange={setSettings} onClose={() => setPanel(null)} serverKey={serverKey} audiveris={audiveris} />}
       {panel === 'help' && <HelpPanel onClose={() => setPanel(null)} />}
+      {panel === 'chords' && (
+        <ChordsPanel
+          score={score}
+          playChords={settings.playChords}
+          setPlayChords={(b) => setSettings({ ...settings, playChords: b })}
+          onApply={(s, msg) => { commit(s); flash(msg); }}
+          onClose={() => setPanel(null)}
+        />
+      )}
       {panel === 'measure' && sel && (
         <MeasurePanel
           score={score}

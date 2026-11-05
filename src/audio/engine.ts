@@ -197,7 +197,7 @@ class Engine {
   private instruments = new Map<string, Voice>();
   private channels: Tone.Channel[] = [];
   private chordChannel?: Tone.Channel;
-  private click?: Tone.Synth;
+  private click_?: Tone.Synth;
   private timer: ReturnType<typeof setInterval> | null = null;
   private plan: PlaybackPlan | null = null;
   private noteIdx = 0;
@@ -232,9 +232,9 @@ class Engine {
     this.meter = new Tone.Meter({ normalRange: true, smoothing: 0.6 });
     limiter.connect(this.meter);
     await reverb.ready;
-    this.click = new Tone.Synth({ oscillator: { type: 'triangle' }, envelope: { attack: 0.001, decay: 0.05, sustain: 0, release: 0.02 } });
-    this.click.volume.value = -10;
-    this.click.connect(comp);
+    this.click_ = new Tone.Synth({ oscillator: { type: 'triangle' }, envelope: { attack: 0.001, decay: 0.05, sustain: 0, release: 0.02 } });
+    this.click_.volume.value = -10;
+    this.click_.connect(comp);
     this.pianoLoaded = this.getInstrument('piano').loaded;
   }
 
@@ -321,9 +321,9 @@ class Engine {
     }
     while (this.beatIdx < this.beatQueue.length && this.beatQueue[this.beatIdx].time < horizon) {
       const b = this.beatQueue[this.beatIdx++] as { time: number; accent: boolean; countIn?: boolean };
-      if ((this.opts.metronome || b.countIn) && this.click) {
+      if ((this.opts.metronome || b.countIn) && this.click_) {
         const t = Math.max(now + 0.005, this.ctxTime(b.time));
-        this.click.triggerAttackRelease(b.accent ? 'A5' : 'E5', 0.03, t, b.accent ? 0.9 : 0.55);
+        this.click_.triggerAttackRelease(b.accent ? 'A5' : 'E5', 0.03, t, b.accent ? 0.9 : 0.55);
       }
     }
     if (this.position() > plan.duration + 0.05) {
@@ -372,6 +372,18 @@ class Engine {
     const v = this.getInstrument(instrument);
     const t = Tone.now() + 0.01;
     for (const m of midis) v.trigger(m, t, 0.45, 0.6);
+  }
+
+  /** Play one note of a part right now (used by wait mode). */
+  playPartNote(part: number, midi: number, dur: number, vel: number) {
+    if (!this.initialized) return;
+    const inst = part < 0 ? 'piano' : this.partInstruments[part] ?? 'piano';
+    if (part >= 0 && this.channels[part]?.mute) return;
+    this.routeTrigger(inst, part, midi, Tone.now() + 0.005, dur, vel);
+  }
+
+  click(accent: boolean) {
+    this.click_?.triggerAttackRelease(accent ? 'A5' : 'E5', 0.03, Tone.now() + 0.005, accent ? 0.9 : 0.55);
   }
 
   setSpeed(speed: number) {

@@ -64,7 +64,14 @@ export function deleteScore(id: string) {
   safeSet(INDEX_KEY, JSON.stringify(listLibrary().filter((e) => e.id !== id)));
 }
 
+export type Engine = 'claude' | 'compat' | 'audiveris';
+
 export interface Settings {
+  engine: Engine;
+  compatPreset: string;
+  compatBaseUrl: string;
+  compatKey: string;
+  compatModel: string;
   apiKey: string;
   model: string;
   effort: Effort;
@@ -74,6 +81,11 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
+  engine: 'claude',
+  compatPreset: 'openrouter',
+  compatBaseUrl: 'https://openrouter.ai/api/v1',
+  compatKey: '',
+  compatModel: '',
   apiKey: '',
   model: 'claude-opus-5-5',
   effort: 'high',

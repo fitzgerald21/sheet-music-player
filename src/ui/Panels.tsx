@@ -4,7 +4,9 @@ import { INSTRUMENTS } from '../audio/engine';
 import { Clef, InstrumentId, Measure, Navigation, Score, cloneScore } from '../model/types';
 import { INTERVAL_NAMES, octaveShift, transposeScore } from '../model/transpose';
 import { keyName, transposeKey, keyTonicPitchClass } from '../model/pitch';
-import { Settings } from '../storage';
+import { Settings, Engine } from '../storage';
+import { COMPAT_PRESETS } from '../omr/openaiCompat';
+import { detectChords, removeChords } from '../model/chordDetect';
 import { keyAt, timeAt } from '../model/fix';
 
 export function Sheet({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
@@ -290,44 +292,128 @@ export function MeasurePanel({ score, m0, m1, onUpdate, onInsert, onDelete, onCl
 }
 
 // ---------------- Settings ----------------
-export function SettingsPanel({ settings, onChange, onClose, serverKey }: { settings: Settings; onChange: (s: Settings) => void; onClose: () => void; serverKey: boolean }) {
+export function SettingsPanel({ settings, onChange, onClose, serverKey, audiveris }: { settings: Settings; onChange: (s: Settings) => void; onClose: () => void; serverKey: boolean; audiveris?: boolean }) {
   const [show, setShow] = useState(false);
+  const preset = COMPAT_PRESETS.find((p) => p.id === settings.compatPreset) ?? COMPAT_PRESETS[0];
   return (
     <Sheet title="Settings" onClose={onClose}>
       <h3 className="sub-h">Music recognition</h3>
       <div className="field">
-        <label htmlFor="apikey">Claude API key</label>
-        <div className="input-with-btn">
-          <input id="apikey" type={show ? 'text' : 'password'} autoComplete="off" placeholder={serverKey ? 'Using the server’s key' : 'sk-ant-…'} value={settings.apiKey} onChange={(e) => onChange({ ...settings, apiKey: e.target.value })} />
-          <button className="btn sm" onClick={() => setShow((x) => !x)}>{show ? 'Hide' : 'Show'}</button>
-        </div>
+        <label htmlFor="engine">Read photos with</label>
+        <select id="engine" value={settings.engine} onChange={(e) => onChange({ ...settings, engine: e.target.value as Engine })}>
+          <option value="claude">Claude (recommended)</option>
+          <option value="compat">OpenRouter / DeepInfra / other AI model</option>
+          <option value="audiveris">Audiveris – free, algorithmic{audiveris ? '' : ' (not installed on server)'}</option>
+        </select>
+      </div>
+      {settings.engine === 'claude' && (
+        <>
+          <div className="field">
+            <label htmlFor="apikey">Claude API key</label>
+            <div className="input-with-btn">
+              <input id="apikey" type={show ? 'text' : 'password'} autoComplete="off" placeholder={serverKey ? 'Using the server’s key' : 'sk-ant-…'} value={settings.apiKey} onChange={(e) => onChange({ ...settings, apiKey: e.target.value })} />
+              <button className="btn sm" onClick={() => setShow((x) => !x)}>{show ? 'Hide' : 'Show'}</button>
+            </div>
+            <p className="hint">
+              {serverKey ? 'This server already has a key, so this is optional. ' : 'Needed to scan photos. '}
+              Your key is stored only in this browser and sent only to Anthropic. Get one at console.anthropic.com.
+            </p>
+          </div>
+          <div className="field-grid">
+            <div className="field">
+              <label htmlFor="model">Model</label>
+              <select id="model" value={settings.model} onChange={(e) => onChange({ ...settings, model: e.target.value })}>
+                <option value="claude-opus-5-5">Claude Opus 5.5 (best)</option>
+                <option value="claude-sonnet-5-5">Claude Sonnet 5.5 (cheaper)</option>
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="effort">Accuracy</label>
+              <select id="effort" value={settings.effort} onChange={(e) => onChange({ ...settings, effort: e.target.value as Settings['effort'] })}>
+                <option value="medium">Quick</option>
+                <option value="high">Careful</option>
+                <option value="xhigh">Very careful</option>
+              </select>
+            </div>
+          </div>
+        </>
+      )}
+      {settings.engine === 'compat' && (
+        <>
+          <div className="field">
+            <label htmlFor="preset">Service</label>
+            <select id="preset" value={settings.compatPreset} onChange={(e) => {
+              const p = COMPAT_PRESETS.find((x) => x.id === e.target.value)!;
+              onChange({ ...settings, compatPreset: p.id, compatBaseUrl: p.baseUrl || settings.compatBaseUrl });
+            }}>
+              {COMPAT_PRESETS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
+            </select>
+          </div>
+          {preset.id === 'custom' && (
+            <div className="field">
+              <label htmlFor="cbase">API address</label>
+              <input id="cbase" placeholder="https://…/v1" value={settings.compatBaseUrl} onChange={(e) => onChange({ ...settings, compatBaseUrl: e.target.value })} />
+            </div>
+          )}
+          <div className="field">
+            <label htmlFor="cmodel">Model (must accept images)</label>
+            <input id="cmodel" placeholder={preset.example} value={settings.compatModel} onChange={(e) => onChange({ ...settings, compatModel: e.target.value })} />
+          </div>
+          <div className="field">
+            <label htmlFor="ckey">API key</label>
+            <div className="input-with-btn">
+              <input id="ckey" type={show ? 'text' : 'password'} autoComplete="off" value={settings.compatKey} onChange={(e) => onChange({ ...settings, compatKey: e.target.value })} />
+              <button className="btn sm" onClick={() => setShow((x) => !x)}>{show ? 'Hide' : 'Show'}</button>
+            </div>
+            <p className="hint">Stored only in this browser. Reading sheet music is hard: smaller open models make many more mistakes than Claude, so expect more fixing.</p>
+          </div>
+        </>
+      )}
+      {settings.engine === 'audiveris' && (
         <p className="hint">
-          {serverKey ? 'This server already has a key, so this is optional. ' : 'Needed to scan photos. '}
-          Your key is stored only in this browser and sent only to Anthropic. Get one at console.anthropic.com.
+          {audiveris
+            ? 'Audiveris is installed on this server. It is free and works best on clean, flat scans or PDFs; phone photos with curl or shadows, lyrics and chord symbols are harder for it.'
+            : 'Audiveris runs on the app’s server, not in the browser. Install it on the computer running “npm start” and set AUDIVERIS_CMD – see the README. It is not available on the GitHub Pages version.'}
         </p>
-      </div>
-      <div className="field-grid">
-        <div className="field">
-          <label htmlFor="model">Model</label>
-          <select id="model" value={settings.model} onChange={(e) => onChange({ ...settings, model: e.target.value })}>
-            <option value="claude-opus-5-5">Claude Opus 5.5 (best)</option>
-            <option value="claude-sonnet-5-5">Claude Sonnet 5.5 (cheaper)</option>
-          </select>
-        </div>
-        <div className="field">
-          <label htmlFor="effort">Accuracy</label>
-          <select id="effort" value={settings.effort} onChange={(e) => onChange({ ...settings, effort: e.target.value as Settings['effort'] })}>
-            <option value="medium">Quick</option>
-            <option value="high">Careful</option>
-            <option value="xhigh">Very careful</option>
-          </select>
-        </div>
-      </div>
+      )}
       <h3 className="sub-h">Playback</h3>
       <label className="check"><input type="checkbox" checked={settings.humanize} onChange={(e) => onChange({ ...settings, humanize: e.target.checked })} /> Human feel (tiny timing & touch variations)</label>
       <label className="check"><input type="checkbox" checked={settings.playChords} onChange={(e) => onChange({ ...settings, playChords: e.target.checked })} /> Also play chord symbols</label>
       <h3 className="sub-h">About</h3>
       <p className="hint">Piano samples: Salamander Grand Piano by Alexander Holm (CC BY 3.0). Notation rendering: OpenSheetMusicDisplay. Sound: Tone.js.</p>
+    </Sheet>
+  );
+}
+
+// ---------------- Chords ----------------
+export function ChordsPanel({ score, onApply, onClose, playChords, setPlayChords }: { score: Score; onApply: (s: Score, msg: string) => void; onClose: () => void; playChords: boolean; setPlayChords: (b: boolean) => void }) {
+  const has = score.measures.some((m) => m.chords?.length);
+  const [granularity, setGranularity] = useState<'auto' | 'measure' | 'beat'>('auto');
+  const [overwrite, setOverwrite] = useState(!has);
+  return (
+    <Sheet title="Chord symbols" onClose={onClose}>
+      <p className="hint">
+        Work out chord names (like <strong>Gm7</strong> or <strong>D7/F♯</strong>) from the notes in each measure. They appear above the staff,
+        follow transposition, and you can edit any of them with Measure tools. Printed chord symbols are already read when you scan.
+      </p>
+      <div className="field">
+        <label htmlFor="gran">How often</label>
+        <select id="gran" value={granularity} onChange={(e) => setGranularity(e.target.value as typeof granularity)}>
+          <option value="auto">Automatic (up to two per measure)</option>
+          <option value="measure">One per measure</option>
+          <option value="beat">Every beat (busy)</option>
+        </select>
+      </div>
+      {has && <label className="check"><input type="checkbox" checked={overwrite} onChange={(e) => setOverwrite(e.target.checked)} /> Replace the existing chord symbols (otherwise only fill measures without any)</label>}
+      <label className="check"><input type="checkbox" checked={playChords} onChange={(e) => setPlayChords(e.target.checked)} /> Play chord symbols softly during playback</label>
+      <div className="row-end">
+        {has && <button className="btn danger" onClick={() => { onApply(removeChords(score), 'Chord symbols removed'); onClose(); }}>Remove all</button>}
+        <button className="btn primary" onClick={() => {
+          const { score: s, added } = detectChords(score, { granularity, overwrite });
+          onApply(s, added ? `Added ${added} chord symbol${added === 1 ? '' : 's'}` : 'No chords found');
+          onClose();
+        }}>Detect chords</button>
+      </div>
     </Sheet>
   );
 }

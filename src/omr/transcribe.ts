@@ -113,42 +113,47 @@ export interface PagesProgress {
   progress: TranscribeProgress;
 }
 
+export type PageFn = (image: PageImage, ctx: PageContext, onProgress: (p: TranscribeProgress) => void) => Promise<PageTranscription>;
+
 /**
- * Transcribe several pages. The first page is done first so later pages can reuse its part layout;
- * the rest run in parallel.
+ * Transcribe several pages with any page reader. The first page is done first so later pages can
+ * reuse its part layout; the rest run in parallel.
  */
-export async function transcribePages(
-  client: Anthropic,
+export async function transcribePagesWith(
+  pageFn: PageFn,
   images: PageImage[],
-  opts: Omit<TranscribeOptions, 'onProgress'> & { onProgress?: (p: PagesProgress) => void } = {},
+  onProgress?: (p: PagesProgress) => void,
 ): Promise<PageTranscription[]> {
-  const results: PageTranscription[] = [];
-  const first = await transcribePage(client, images[0], { pageIndex: 0, pageCount: images.length }, {
-    ...opts,
-    onProgress: (p) => opts.onProgress?.({ page: 0, progress: p }),
-  });
-  results.push(first);
+  const first = await pageFn(images[0], { pageIndex: 0, pageCount: images.length }, (p) => onProgress?.({ page: 0, progress: p }));
+  const results = [first];
   if (images.length > 1) {
-    const parts = first.parts;
     const lastMeasure = first.measures[first.measures.length - 1];
     const rest = await Promise.all(
       images.slice(1).map((img, k) =>
-        transcribePage(
-          client,
+        pageFn(
           img,
           {
             pageIndex: k + 1,
             pageCount: images.length,
-            parts,
+            parts: first.parts,
             keyFifths: first.keyFifths,
             timeSignature: first.timeSignature,
             firstMeasureNumber: k === 0 && lastMeasure ? lastMeasure.number + 1 : undefined,
           },
-          { ...opts, onProgress: (p) => opts.onProgress?.({ page: k + 1, progress: p }) },
+          (p) => onProgress?.({ page: k + 1, progress: p }),
         ),
       ),
     );
     results.push(...rest);
   }
   return results;
+}
+
+/** Transcribe several pages with Claude. */
+export async function transcribePages(
+  client: Anthropic,
+  images: PageImage[],
+  opts: Omit<TranscribeOptions, 'onProgress'> & { onProgress?: (p: PagesProgress) => void } = {},
+): Promise<PageTranscription[]> {
+  return transcribePagesWith((img, ctx, onProgress) => transcribePage(client, img, ctx, { ...opts, onProgress }), images, opts.onProgress);
 }

@@ -15,6 +15,10 @@ export interface ScoreViewHandle {
   /** highlight these event ids as playing and show a cursor on `measure` */
   setPlaying(ids: Set<string>, measure: number | null, follow: boolean): void;
   measureAtPoint(x: number, y: number): number | null;
+  /** mark notes the player should play now (wait mode) */
+  setTargets(ids: Set<string>): void;
+  /** measure boxes in px relative to the score host */
+  measureBoxes(): { x: number; y: number; w: number; h: number }[];
 }
 
 interface Props {
@@ -24,6 +28,10 @@ interface Props {
   onSelect: (sel: Selection | null, additive: boolean) => void;
   onRendered?: () => void;
   editMode: boolean;
+  /** paper colour for the performance view */
+  paper?: 'white' | 'cream' | 'dark';
+  /** turn off tap-to-select (performance view handles taps itself) */
+  passive?: boolean;
 }
 
 interface MeasureBox {
@@ -35,12 +43,13 @@ interface MeasureBox {
 
 const UNIT = 10;
 
-export const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ score, zoom, selection, onSelect, onRendered, editMode }, ref) {
+export const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ score, zoom, selection, onSelect, onRendered, editMode, paper, passive }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
   const elemsRef = useRef(new Map<string, SVGGElement[]>());
   const measureBoxes = useRef<MeasureBox[]>([]);
   const playingRef = useRef(new Set<string>());
+  const targetsRef = useRef(new Set<string>());
   const cursorRef = useRef<HTMLDivElement>(null);
   const selBoxRef = useRef<HTMLDivElement>(null);
   const lastFollow = useRef<number>(-1);
@@ -186,6 +195,7 @@ export const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({
     measureBoxes.current = boxes;
     // re-apply playing state
     for (const id of playingRef.current) elems.get(id)?.forEach((g) => g.classList.add('playing'));
+    for (const id of targetsRef.current) elems.get(id)?.forEach((g) => g.classList.add('target'));
   }
 
   // selection highlight
@@ -258,6 +268,15 @@ export const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({
     measureAtPoint(x, y) {
       return hitMeasure(x, y);
     },
+    setTargets(ids) {
+      const prev = targetsRef.current;
+      for (const id of prev) if (!ids.has(id)) elemsRef.current.get(id)?.forEach((g) => g.classList.remove('target'));
+      for (const id of ids) elemsRef.current.get(id)?.forEach((g) => g.classList.add('target'));
+      targetsRef.current = new Set(ids);
+    },
+    measureBoxes() {
+      return measureBoxes.current;
+    },
   }));
 
   function hitMeasure(x: number, y: number): number | null {
@@ -270,6 +289,7 @@ export const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({
   }
 
   function onClick(ev: React.MouseEvent) {
+    if (passive) return;
     const host = hostRef.current!;
     const rect = host.getBoundingClientRect();
     const x = ev.clientX - rect.left;
@@ -320,7 +340,7 @@ export const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({
   }
 
   return (
-    <div className={`score-paper ${editMode ? 'editing' : ''}`}>
+    <div className={`score-paper ${editMode ? 'editing' : ''} ${paper ? `paper-${paper}` : ''}`}>
       {error && <div className="render-error">Could not draw this score: {error}</div>}
       <div className="score-host-wrap" onClick={onClick}>
         <div ref={hostRef} className="score-host" />

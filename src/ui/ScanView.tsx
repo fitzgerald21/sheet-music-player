@@ -1,8 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from './Icons';
 import { prepareImage, PreparedImage } from '../omr/image';
-import { transcribe } from '../omr/client';
-import { convertPages } from '../omr/convert';
+import { scanPages } from '../omr/client';
 import { TranscribeProgress } from '../omr/transcribe';
 import { Score } from '../model/types';
 import { Settings } from '../storage';
@@ -21,6 +20,7 @@ interface Props {
   onDone: (scores: Score[]) => void;
   onCancel: () => void;
   onNeedKey: () => void;
+  initialFiles?: File[];
 }
 
 const PHASE_LABEL: Record<TranscribeProgress['phase'], string> = {
@@ -30,7 +30,7 @@ const PHASE_LABEL: Record<TranscribeProgress['phase'], string> = {
   done: 'Done',
 };
 
-export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey }: Props) {
+export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey, initialFiles }: Props) {
   const [pages, setPages] = useState<PageItem[]>([]);
   const [combine, setCombine] = useState(true);
   const [busy, setBusy] = useState(false);
@@ -41,6 +41,15 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey }: 
   const abortRef = useRef<AbortController | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const pickRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (initialFiles?.length) {
+      const dt = new DataTransfer();
+      initialFiles.forEach((f) => dt.items.add(f));
+      void addFiles(dt.files);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!busy) return;
@@ -93,13 +102,13 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey }: 
       const groups: PageItem[][] = combine ? [ready] : ready.map((p) => [p]);
       const scores = await Promise.all(
         groups.map(async (group) => {
-          const result = await transcribe(
+          const { score, warnings, repaired } = await scanPages(
             group.map((g) => g.prepared!.image),
             settings,
-            (p) => setProgress((cur) => ({ ...cur, [group[p.page].key]: p.progress })),
+            (p) => setProgress((cur) => ({ ...cur, [group[p.page]?.key ?? '']: p.progress })),
             ac.signal,
           );
-          const { score, warnings, repaired } = convertPages(result);
+          score.source = settings.engine;
           if (repaired.length) score.notes = [...(score.notes ?? []), `Rhythm was auto-corrected in measure${repaired.length > 1 ? 's' : ''} ${repaired.map((i) => i + 1).slice(0, 12).join(', ')}${repaired.length > 12 ? '…' : ''} – worth a check.`];
           if (warnings.length) score.notes = [...(score.notes ?? []), ...warnings.slice(0, 5)];
           return score;
@@ -109,7 +118,11 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey }: 
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg === 'NO_KEY') {
-        setError('To scan music, add your Claude API key in Settings (or run the server with ANTHROPIC_API_KEY).');
+        setError(
+          settings.engine === 'compat'
+            ? 'Add your OpenRouter / DeepInfra API key and model in Settings.'
+            : 'To scan music, add your Claude API key in Settings (or run the server with ANTHROPIC_API_KEY).',
+        );
         onNeedKey();
       } else if (msg !== 'Cancelled') setError(msg);
     } finally {
@@ -204,7 +217,7 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey }: 
         )}
         {pages.length > 1 && combine && !busy && <p className="hint">Put the pages in order. If they have printed page numbers they'll be sorted automatically.</p>}
 
-        {pages.length > 0 && !busy && (
+        {pages.length > 0 && !busy && settings.engine === 'claude' && (
           <div className="field-row">
             <label htmlFor="acc">Accuracy</label>
             <select id="acc" value={settings.effort} onChange={(e) => onSettings({ ...settings, effort: e.target.value as Settings['effort'] })}>
@@ -219,7 +232,7 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey }: 
 
         {busy && (
           <p className="hint center">
-            Claude is reading your music – a dense page usually takes 1–4 minutes. ({Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, '0')})
+            {settings.engine === 'audiveris' ? 'Audiveris is reading your music' : settings.engine === 'compat' ? 'The model is reading your music' : 'Claude is reading your music'} – a dense page usually takes 1–4 minutes. ({Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, '0')})
           </p>
         )}
       </div>

@@ -1,6 +1,7 @@
 import { useRef } from 'react';
 import { Icon } from './Icons';
 import { LibraryEntry } from '../storage';
+import { IMPORT_ACCEPT } from '../importers';
 
 interface Props {
   entries: LibraryEntry[];
@@ -10,10 +11,11 @@ interface Props {
   onDemo: () => void;
   onImport: (file: File) => void;
   onSettings: () => void;
+  onFind: () => void;
   needsKey: boolean;
 }
 
-export function Library({ entries, onOpen, onDelete, onScan, onDemo, onImport, onSettings, needsKey }: Props) {
+export function Library({ entries, onOpen, onDelete, onScan, onDemo, onImport, onSettings, onFind, needsKey }: Props) {
   const fileRef = useRef<HTMLInputElement>(null);
   return (
     <div className="library">
@@ -25,14 +27,15 @@ export function Library({ entries, onOpen, onDelete, onScan, onDemo, onImport, o
       <main className="library-body">
         <section className="hero-card">
           <h1>Turn a photo of sheet music into a score you can play and edit.</h1>
-          <p>Photograph one page or several. Claude reads the notes, then you can play the music back, change the tempo, transpose it and fix anything by hand.</p>
+          <p>Photograph one page or several, or open a PDF, MusicXML, MIDI or ABC file. Then play it back, practise along on your piano, transpose it, add chords, print it, and fix anything by hand.</p>
           <div className="hero-actions">
             <button className="btn primary big" onClick={onScan}><Icon.camera /> Scan music</button>
+            <button className="btn big" onClick={onFind}><Icon.library size={18} /> Find music</button>
             <button className="btn big" onClick={onDemo}><Icon.play size={18} /> Try a demo</button>
           </div>
           {needsKey && (
             <p className="hint warn-text">
-              Scanning needs a Claude API key. <button className="link" onClick={onSettings}>Add it in Settings</button>.
+              Scanning needs an API key (or Audiveris on your server). <button className="link" onClick={onSettings}>Set it up in Settings</button>.
             </p>
           )}
         </section>
@@ -42,10 +45,10 @@ export function Library({ entries, onOpen, onDelete, onScan, onDemo, onImport, o
             <h2>Your music</h2>
             <span className="grow" />
             <button className="btn sm" onClick={() => fileRef.current?.click()}><Icon.upload size={16} /> Import</button>
-            <input ref={fileRef} type="file" accept=".json,.smp.json,application/json" hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) onImport(f); e.target.value = ''; }} />
+            <input ref={fileRef} type="file" accept={IMPORT_ACCEPT} hidden onChange={(e) => { const f = e.target.files?.[0]; if (f) onImport(f); e.target.value = ''; }} />
           </div>
           {entries.length === 0 ? (
-            <p className="empty">Nothing yet. Scanned pieces are saved here automatically, on this device.</p>
+            <p className="empty">Nothing yet. Scanned and imported pieces are saved here automatically, on this device. Import opens MusicXML (.musicxml/.mxl), MIDI, ABC, PDF and images.</p>
           ) : (
             <ul className="score-list">
               {entries.map((e) => (

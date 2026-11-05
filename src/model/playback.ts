@@ -127,6 +127,8 @@ export interface PlanOptions {
   humanize?: boolean;
   playChords?: boolean;
   swing?: boolean;
+  /** global staff indices whose notes are highlighted but not played (e.g. the hand you play yourself) */
+  mutedStaves?: number[];
 }
 
 export function buildPlan(score: Score, opts: PlanOptions = {}): PlaybackPlan {
@@ -232,7 +234,7 @@ export function buildPlan(score: Score, opts: PlanOptions = {}): PlaybackPlan {
                 eventId: e.id,
                 staff: si,
               };
-              notes.push(note);
+              if (!opts.mutedStaves?.includes(si)) notes.push(note);
               if (p.tie && !e.grace) {
                 openTies.set(key, note);
                 stillOpen.add(key);

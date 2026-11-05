@@ -63,6 +63,7 @@ export function toMidi(score: Score, plan: PlaybackPlan): Uint8Array {
   }
   const [num, den] = score.time;
   meta.push({ tick: 0, order: 2, data: [0xff, 0x58, 0x04, num, Math.log2(den), 24, 8] });
+  meta.push({ tick: 0, order: 3, data: [0xff, 0x59, 0x02, score.key & 0xff, 0] });
   tracks.push(track(meta));
 
   score.parts.forEach((part, pi) => {
