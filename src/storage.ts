@@ -71,6 +71,13 @@ export interface Settings {
   engine: Engine;
   /** After an on-device scan, ask the AI service below for the title, tempo, chords and lyrics. */
   localExtras: boolean;
+  /** What that AI pass reads. */
+  extrasInfo: boolean;
+  extrasChords: boolean;
+  extrasLyrics: boolean;
+  /** Draw chord symbols / lyrics on the score. */
+  showChords: boolean;
+  showLyrics: boolean;
   compatPreset: string;
   compatBaseUrl: string;
   compatKey: string;
@@ -86,6 +93,11 @@ export interface Settings {
 export const DEFAULT_SETTINGS: Settings = {
   engine: 'local',
   localExtras: true,
+  extrasInfo: true,
+  extrasChords: true,
+  extrasLyrics: true,
+  showChords: true,
+  showLyrics: true,
   compatPreset: 'openrouter',
   compatBaseUrl: 'https://openrouter.ai/api/v1',
   compatKey: '',

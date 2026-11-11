@@ -9,7 +9,7 @@ import { setDuration, changePitch, setLetter } from '../src/model/edit';
 import { convertPages } from '../src/omr/convert';
 import { transposeChord } from '../src/model/chords';
 import { midiOf, transposeKey } from '../src/model/pitch';
-import { Score } from '../src/model/types';
+import { Score, displayScore } from '../src/model/types';
 import { applyExtras, lyricSlots, readExtras } from '../src/omr/annotate';
 
 describe('tokens', () => {
@@ -236,6 +236,13 @@ describe('title, chords and lyrics from an AI model', () => {
       expect(voiceToString(score.measures[0].staves[0].voices[0])).toBe('D5/q."Sing" C5/8"a" Bb4/h~"song"');
       expect(voiceToString(score.measures[1].staves[0].voices[0])).toBe('Bb4/q r/q F4/8"of" G4/8"six-" A4/q');
       expect(summary).toEqual({ chords: 2, lyrics: 5, uneven: [1] });
+      const chordsOnly = page();
+      expect(applyExtras(chordsOnly, extras, { info: false, chords: true, lyrics: false })).toEqual({ chords: 2, lyrics: 0, uneven: [] });
+      expect(chordsOnly.title).toBe('Untitled');
+      const hidden = displayScore(score, { chords: false, lyrics: false });
+      expect(hidden.measures[0].chords).toBeUndefined();
+      expect(voiceToString(hidden.measures[0].staves[0].voices[0])).toBe('D5/q. C5/8 Bb4/h~');
+      expect(score.measures[0].chords).toHaveLength(2);
     } finally {
       globalThis.fetch = original;
     }

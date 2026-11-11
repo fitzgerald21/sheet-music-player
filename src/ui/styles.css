@@ -412,3 +412,6 @@ a { color: var(--accent); }
   color: var(--ink);
 }
 .perform.paper-dark .perform-bottom { background: #17191e; }
+
+.menu-tick { display: inline-block; width: 16px; text-align: center; color: var(--accent); font-weight: 700; }
+.check-group { margin: 0 0 6px 26px; }

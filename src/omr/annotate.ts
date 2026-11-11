@@ -14,6 +14,14 @@ export interface PageExtras {
   measures: { m: number; chords: { beat: number; symbol: string }[]; lyrics: string[] }[];
 }
 
+/** Which things the model is asked to read. */
+export interface ExtrasWanted {
+  info: boolean;
+  chords: boolean;
+  lyrics: boolean;
+}
+export const ALL_EXTRAS: ExtrasWanted = { info: true, chords: true, lyrics: true };
+
 export interface ExtrasSummary {
   chords: number;
   lyrics: number;
@@ -42,7 +50,7 @@ export function lyricSlots(score: Score): NoteEvent[][] {
   });
 }
 
-const SYSTEM = `You help digitise printed sheet music. The notes of the page in the photo have already been read by a machine. You add what the machine cannot read: the title and credits, the tempo, the chord symbols above the staff and the lyrics under the top staff.
+const system = (want: ExtrasWanted) => `You help digitise printed sheet music. The notes of the page in the photo have already been read by a machine. You add what the machine cannot read: the title and credits, the tempo, the chord symbols above the staff and the lyrics under the top staff.
 
 You are given the top staff of every measure the machine found, in reading order (system by system, left to right). Notes are written pitch/duration: w whole, h half, q quarter, 8 eighth, 16 sixteenth, a "." for each dot, "t" for a triplet, r for a rest, R for a whole-measure rest, "~" for a note tied to the next, "+" between the notes of a chord. Use the melody to find each measure in the photo. The machine sometimes misreads a note, so match measures by their overall shape and their position on the page, not note by note.
 
@@ -54,7 +62,7 @@ Reply with one JSON object and nothing else:
 - measures: one entry for every measure given to you, with the same number "m".
 - chords: the chord symbols printed above that measure, in order. "beat" is where the symbol sits, 1-based, in units of the time signature's lower number (1.5 = the second eighth note in 4/4). Write flats as "b" and sharps as "#": "Eb", "Bb7/F", "Edim", "F7sus4", "Gm", "F/A". Ignore guitar chord diagrams and fingering numbers. [] if none.
 - lyrics: the first verse only. Give exactly one string for every sung note of the measure – the list tells you how many. A note that starts a tie counts once; the note it is tied to is not counted. Use the syllable printed under that note; end it with "-" when the word continues on a later note ("ev-", "ry"); use "" for a note with no syllable of its own (a syllable held over several notes). [] for every measure if the music has no lyrics.
-- Never invent text that is not printed. If you cannot find a measure in the photo, give it empty chords and lyrics.`;
+${[!want.info && '- Do not read the title, composer, lyricist or tempo: leave them "" and 0.', !want.chords && '- Do not read chord symbols: give [] for "chords" in every measure.', !want.lyrics && '- Do not read lyrics: give [] for "lyrics" in every measure.'].filter(Boolean).map((l) => l + '\n').join('')}- Never invent text that is not printed. If you cannot find a measure in the photo, give it empty chords and lyrics.`;
 
 function describe(score: Score): string {
   const slots = lyricSlots(score);
@@ -93,14 +101,14 @@ function normalise(raw: unknown): PageExtras {
 }
 
 /** Asks the model for the title, tempo, chords and lyrics of one page. */
-export async function readExtras(cfg: CompatConfig, image: PageImage, score: Score, signal?: AbortSignal): Promise<PageExtras> {
+export async function readExtras(cfg: CompatConfig, image: PageImage, score: Score, signal?: AbortSignal, want: ExtrasWanted = ALL_EXTRAS): Promise<PageExtras> {
   if (!cfg.baseUrl || !cfg.model) throw new TranscriptionError('Set the AI model in Settings.', 'auth');
   const body = (format: unknown) => ({
     model: cfg.model,
     max_tokens: 16000,
     temperature: 0,
     messages: [
-      { role: 'system', content: SYSTEM },
+      { role: 'system', content: system(want) },
       {
         role: 'user',
         content: [
@@ -135,7 +143,13 @@ export async function readExtras(cfg: CompatConfig, image: PageImage, score: Sco
 }
 
 /** Writes the model's answer into the score of that page. */
-export function applyExtras(score: Score, extras: PageExtras): ExtrasSummary {
+export function applyExtras(score: Score, raw: PageExtras, want: ExtrasWanted = ALL_EXTRAS): ExtrasSummary {
+  // what was switched off is dropped even if the model answered it anyway
+  const extras: PageExtras = {
+    ...raw,
+    ...(want.info ? {} : { title: '', composer: '', lyricist: '', tempo: 0 }),
+    measures: raw.measures.map((m) => ({ m: m.m, chords: want.chords ? m.chords : [], lyrics: want.lyrics ? m.lyrics : [] })),
+  };
   const summary: ExtrasSummary = { chords: 0, lyrics: 0, uneven: [] };
   if (extras.title) score.title = extras.title;
   if (extras.composer) score.composer = extras.composer;

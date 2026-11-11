@@ -15,7 +15,7 @@ import { engine } from '../audio/engine';
 import { buildPlan, PlaybackPlan } from '../model/playback';
 import { toMusicXML } from '../model/musicxml';
 import { toMidi } from '../model/midi';
-import { Measure, NoteEvent, Score, newId } from '../model/types';
+import { Measure, NoteEvent, Score, displayScore, newId } from '../model/types';
 import { keyAt } from '../model/fix';
 import { midiOf } from '../model/pitch';
 import {
@@ -57,6 +57,7 @@ export function App() {
   const [scanFiles, setScanFiles] = useState<File[] | undefined>(undefined);
   const [audiveris, setAudiveris] = useState(false);
   const [settings, setSettingsState] = useState<Settings>(loadSettings);
+  const shown = useMemo(() => (score ? displayScore(score, { chords: settings.showChords, lyrics: settings.showLyrics }) : null), [score, settings.showChords, settings.showLyrics]);
   const [library, setLibrary] = useState(listLibrary);
   const [sel, setSel] = useState<Selection | null>(null);
   const [editMode, setEditMode] = useState(false);
@@ -575,10 +576,10 @@ export function App() {
     );
   }
 
-  if (view === 'print' && score) return <PrintView score={score} onBack={() => setView('score')} />;
+  if (view === 'print' && score) return <PrintView score={shown ?? score} onBack={() => setView('score')} />;
 
   if (view === 'perform' && score)
-    return <PerformView score={score} settings={settings} startMeasure={sel?.m0} onExit={() => setView('score')} />;
+    return <PerformView score={shown ?? score} settings={settings} startMeasure={sel?.m0} onExit={() => setView('score')} />;
 
   if (view === 'library' || !score) {
     return (
@@ -641,6 +642,8 @@ export function App() {
               <button onClick={() => { setMoreOpen(false); setView('scan'); }}><Icon.camera size={16} /> Scan new music</button>
               <button onClick={() => { setMoreOpen(false); setPanel('info'); }}><Icon.info size={16} /> Score details</button>
               <button onClick={() => { setMoreOpen(false); setPanel('chords'); }}><Icon.music size={16} /> Chord symbols…</button>
+              <button role="menuitemcheckbox" aria-checked={settings.showChords} onClick={() => setSettings({ ...settings, showChords: !settings.showChords })}><span className="menu-tick">{settings.showChords ? '✓' : ''}</span> Show chord symbols</button>
+              <button role="menuitemcheckbox" aria-checked={settings.showLyrics} onClick={() => setSettings({ ...settings, showLyrics: !settings.showLyrics })}><span className="menu-tick">{settings.showLyrics ? '✓' : ''}</span> Show lyrics</button>
               <div className="menu-sep" />
               <button onClick={() => exportAs('musicxml')}><Icon.download size={16} /> Export MusicXML</button>
               <button onClick={() => exportAs('midi')}><Icon.download size={16} /> Export MIDI</button>
@@ -688,7 +691,7 @@ export function App() {
       )}
 
       <main className="score-scroll">
-        <ScoreView ref={viewRef} score={score} zoom={zoom} selection={sel} onSelect={onSelect} editMode={editMode} />
+        <ScoreView ref={viewRef} score={shown ?? score} zoom={zoom} selection={sel} onSelect={onSelect} editMode={editMode} />
       </main>
 
       <Transport

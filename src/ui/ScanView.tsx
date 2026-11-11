@@ -256,7 +256,7 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey, in
         {pages.length > 0 && !busy && settings.engine === 'local' && (
           <p className="hint">Reads the notes and rhythms on your device; nothing is uploaded. About 1–3 minutes a page{localMB ? `; the first time it downloads about ${localMB} MB, so use Wi‑Fi` : ''}. Flat, sharp, evenly lit photos read best.{' '}
             {extras
-              ? `Then the photo is sent to ${extras.model} for the title, tempo, chord symbols and lyrics.`
+              ? `Then the photo is sent to ${extras.model} for the ${[settings.extrasInfo && 'title and tempo', settings.extrasChords && 'chord symbols', settings.extrasLyrics && 'lyrics'].filter(Boolean).join(', ')}.`
               : settings.localExtras
                 ? <>To also get the title, chord symbols and lyrics, <button className="link" onClick={onNeedKey}>add an OpenRouter key in Settings</button>.</>
                 : ''}

@@ -317,7 +317,14 @@ export function SettingsPanel({ settings, onChange, onClose, serverKey, audiveri
         <label className="check"><input type="checkbox" checked={settings.localExtras} onChange={(e) => onChange({ ...settings, localExtras: e.target.checked })} /> Add the title, tempo, chord symbols and lyrics with an AI model</label>
       )}
       {settings.engine === 'local' && settings.localExtras && (
-        <p className="hint">For this the photo is sent to the service below, with your key. It costs roughly 5–15 cents a page with the default model. Without a key, only the notes are read.</p>
+        <>
+          <div className="check-group">
+            <label className="check"><input type="checkbox" checked={settings.extrasInfo} onChange={(e) => onChange({ ...settings, extrasInfo: e.target.checked })} /> Title, composer and tempo</label>
+            <label className="check"><input type="checkbox" checked={settings.extrasChords} onChange={(e) => onChange({ ...settings, extrasChords: e.target.checked })} /> Chord symbols</label>
+            <label className="check"><input type="checkbox" checked={settings.extrasLyrics} onChange={(e) => onChange({ ...settings, extrasLyrics: e.target.checked })} /> Lyrics</label>
+          </div>
+          <p className="hint">For this the photo is sent to the service below, with your key. It costs roughly 5–15 cents a page with the default model. Without a key, only the notes are read.</p>
+        </>
       )}
       {settings.engine === 'claude' && (
         <>
@@ -392,6 +399,9 @@ export function SettingsPanel({ settings, onChange, onClose, serverKey, audiveri
       <h3 className="sub-h">Playback</h3>
       <label className="check"><input type="checkbox" checked={settings.humanize} onChange={(e) => onChange({ ...settings, humanize: e.target.checked })} /> Human feel (tiny timing & touch variations)</label>
       <label className="check"><input type="checkbox" checked={settings.playChords} onChange={(e) => onChange({ ...settings, playChords: e.target.checked })} /> Also play chord symbols</label>
+      <h3 className="sub-h">Display</h3>
+      <label className="check"><input type="checkbox" checked={settings.showChords} onChange={(e) => onChange({ ...settings, showChords: e.target.checked })} /> Show chord symbols</label>
+      <label className="check"><input type="checkbox" checked={settings.showLyrics} onChange={(e) => onChange({ ...settings, showLyrics: e.target.checked })} /> Show lyrics</label>
       <h3 className="sub-h">About</h3>
       <p className="hint">Piano samples: Salamander Grand Piano by Alexander Holm (CC BY 3.0). Notation rendering: OpenSheetMusicDisplay. Sound: Tone.js. On-device music reading: homr by Christian Liebhardt and contributors (AGPL-3.0), run with Pyodide and ONNX Runtime.</p>
     </Sheet>

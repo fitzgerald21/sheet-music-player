@@ -147,3 +147,16 @@ export function newId(prefix = 'e'): string {
 export function cloneScore(s: Score): Score {
   return structuredClone(s);
 }
+
+/** The score as it should be drawn when chord symbols or lyrics are switched off. Notes keep their ids. */
+export function displayScore(score: Score, show: { chords: boolean; lyrics: boolean }): Score {
+  if (show.chords && show.lyrics) return score;
+  return {
+    ...score,
+    measures: score.measures.map((m) => ({
+      ...m,
+      chords: show.chords ? m.chords : undefined,
+      staves: show.lyrics ? m.staves : m.staves.map((st) => ({ voices: st.voices.map((v) => v.map((e) => (e.lyric ? { ...e, lyric: undefined } : e))) })),
+    })),
+  };
+}
