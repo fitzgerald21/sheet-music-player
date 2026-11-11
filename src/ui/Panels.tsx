@@ -6,6 +6,7 @@ import { INTERVAL_NAMES, octaveShift, transposeScore } from '../model/transpose'
 import { keyName, transposeKey, keyTonicPitchClass } from '../model/pitch';
 import { Settings, Engine } from '../storage';
 import { COMPAT_PRESETS } from '../omr/openaiCompat';
+import { DEFAULT_EXTRAS_MODEL } from '../omr/annotate';
 import { detectChords, removeChords } from '../model/chordDetect';
 import { keyAt, timeAt } from '../model/fix';
 
@@ -309,8 +310,14 @@ export function SettingsPanel({ settings, onChange, onClose, serverKey, audiveri
       </div>
       {settings.engine === 'local' && (
         <p className="hint">
-          Photos are read on this device by <a href="https://github.com/liebharc/homr" target="_blank" rel="noreferrer">homr</a>, so nothing is uploaded and there is nothing to pay. It reads notes and rhythms well, but not the title, tempo, chord symbols or lyrics. The first scan downloads the reader (about 200 MB, kept for next time); after that a page takes roughly 1–3 minutes. It needs a fairly recent phone or computer.
+          Photos are read on this device by <a href="https://github.com/liebharc/homr" target="_blank" rel="noreferrer">homr</a>, so nothing is uploaded and there is nothing to pay. It reads notes and rhythms well, but not the title, tempo, chord symbols or lyrics – an AI model can add those (below). The first scan downloads the reader (about 200 MB, kept for next time); after that a page takes roughly 1–3 minutes. It needs a fairly recent phone or computer.
         </p>
+      )}
+      {settings.engine === 'local' && (
+        <label className="check"><input type="checkbox" checked={settings.localExtras} onChange={(e) => onChange({ ...settings, localExtras: e.target.checked })} /> Add the title, tempo, chord symbols and lyrics with an AI model</label>
+      )}
+      {settings.engine === 'local' && settings.localExtras && (
+        <p className="hint">For this the photo is sent to the service below, with your key. It costs roughly 5–15 cents a page with the default model. Without a key, only the notes are read.</p>
       )}
       {settings.engine === 'claude' && (
         <>
@@ -344,7 +351,7 @@ export function SettingsPanel({ settings, onChange, onClose, serverKey, audiveri
           </div>
         </>
       )}
-      {settings.engine === 'compat' && (
+      {(settings.engine === 'compat' || (settings.engine === 'local' && settings.localExtras)) && (
         <>
           <div className="field">
             <label htmlFor="preset">Service</label>
@@ -363,7 +370,7 @@ export function SettingsPanel({ settings, onChange, onClose, serverKey, audiveri
           )}
           <div className="field">
             <label htmlFor="cmodel">Model (must accept images)</label>
-            <input id="cmodel" placeholder={preset.example} value={settings.compatModel} onChange={(e) => onChange({ ...settings, compatModel: e.target.value })} />
+            <input id="cmodel" autoCapitalize="off" autoCorrect="off" placeholder={settings.engine === 'local' && preset.id === 'openrouter' ? `${DEFAULT_EXTRAS_MODEL} (used if left empty)` : preset.example} value={settings.compatModel} onChange={(e) => onChange({ ...settings, compatModel: e.target.value })} />
           </div>
           <div className="field">
             <label htmlFor="ckey">API key</label>
@@ -371,7 +378,7 @@ export function SettingsPanel({ settings, onChange, onClose, serverKey, audiveri
               <input id="ckey" type={show ? 'text' : 'password'} autoComplete="off" value={settings.compatKey} onChange={(e) => onChange({ ...settings, compatKey: e.target.value })} />
               <button className="btn sm" onClick={() => setShow((x) => !x)}>{show ? 'Hide' : 'Show'}</button>
             </div>
-            <p className="hint">Stored only in this browser. Reading sheet music is hard: smaller open models make many more mistakes than Claude, so expect more fixing.</p>
+            <p className="hint">Stored only in this browser and sent only to that service.{settings.engine === 'local' ? '' : ' Reading sheet music is hard: smaller open models make many more mistakes than Claude, so expect more fixing.'}</p>
           </div>
         </>
       )}

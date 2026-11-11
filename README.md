@@ -58,6 +58,8 @@ Settings → *Read photos with*:
 
 **Scanning on the device with homr.** `npm run fetch-homr` downloads homr's three ONNX models, its Python package and the ONNX Runtime WebAssembly files into `public/homr/` (about 160 MB, not committed; the Pages workflow runs it before building). In the browser, homr's Python image processing runs in [Pyodide](https://pyodide.org) (loaded from jsDelivr) and its networks in [ONNX Runtime Web](https://onnxruntime.ai); see `src/omr/local`. Without those files the option reports that it is not included. homr is licensed AGPL-3.0, so a copy of this app that ships it must offer its source under AGPL-compatible terms.
 
+**Title, chords and lyrics for on-device scans.** homr reads only notes and rhythms. With *Add the title, tempo, chord symbols and lyrics with an AI model* ticked in Settings and an OpenRouter (or DeepInfra, or other OpenAI-compatible) key entered, each photo is also sent to that model together with the melody homr found, and the model's answer is written into the score (`src/omr/annotate.ts`). On OpenRouter the model defaults to `anthropic/claude-opus-5.5`. Without a key this step is skipped.
+
 **Free algorithmic scanning with Audiveris.** [Audiveris](https://github.com/Audiveris/audiveris) is the leading open-source optical music recognition program. It finds staff lines, noteheads, stems and beams with classic image processing plus small neural classifiers. It runs on the computer that serves the app, not in the browser and not on GitHub Pages:
 
 1. Install Audiveris from its [releases page](https://github.com/Audiveris/audiveris/releases).

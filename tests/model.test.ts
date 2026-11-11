@@ -10,6 +10,7 @@ import { convertPages } from '../src/omr/convert';
 import { transposeChord } from '../src/model/chords';
 import { midiOf, transposeKey } from '../src/model/pitch';
 import { Score } from '../src/model/types';
+import { applyExtras, lyricSlots, readExtras } from '../src/omr/annotate';
 
 describe('tokens', () => {
   it('round-trips', () => {
@@ -187,5 +188,56 @@ describe('chord ties', () => {
     const score = { measures: [{ staves: [{ voices: [a] }] }] } as unknown as Score;
     expect(completeChordTies(score)).toBe(0);
     expect(a[0].pitches.some((p) => p.tie)).toBe(false);
+  });
+});
+
+describe('title, chords and lyrics from an AI model', () => {
+  const page = (): Score =>
+    ({
+      title: 'Untitled',
+      tempo: 100,
+      time: [4, 4],
+      measures: [
+        { staves: [{ voices: [parseVoice('D5/q. C5/8 Bb4/h~').events] }] },
+        { staves: [{ voices: [parseVoice('Bb4/q r/q F4/8 G4/8 A4/q').events] }] },
+      ],
+    }) as unknown as Score;
+
+  it('counts one syllable per sung note and skips notes held by a tie', () => {
+    expect(lyricSlots(page()).map((s) => s.length)).toEqual([3, 3]);
+  });
+
+  it('asks the model and writes its answer into the score', async () => {
+    const answer = {
+      title: 'I Wish I Knew',
+      composer: 'B. Taylor',
+      tempo: 96,
+      measures: [
+        { m: 1, chords: [{ beat: 1, symbol: 'B♭' }, { beat: 3, symbol: 'D7/F#' }], lyrics: ['Sing', 'a', 'song'] },
+        { m: 2, chords: [], lyrics: ['of', 'six-'] },
+        { m: 9, chords: [{ beat: 1, symbol: 'C' }], lyrics: ['x'] },
+      ],
+    };
+    let sent: { model: string; messages: { content: unknown }[] } | undefined;
+    const original = globalThis.fetch;
+    globalThis.fetch = (async (_url: unknown, init: { body: string }) => {
+      sent = JSON.parse(init.body);
+      return new Response(JSON.stringify({ choices: [{ message: { content: '```json\n' + JSON.stringify(answer) + '\n```' } }] }), { status: 200 });
+    }) as unknown as typeof fetch;
+    try {
+      const score = page();
+      const extras = await readExtras({ baseUrl: 'https://example.test/v1', apiKey: 'k', model: 'some/model' }, { data: 'AAAA', mediaType: 'image/jpeg' } as never, score);
+      const prompt = JSON.stringify(sent!.messages[1].content);
+      expect(prompt).toContain('1: D5/q. C5/8 Bb4/h~   [3 sung notes]');
+      const summary = applyExtras(score, extras);
+      expect(score.title).toBe('I Wish I Knew');
+      expect(score.tempo).toBe(96);
+      expect(score.measures[0].chords).toEqual([{ beat: 1, text: 'Bb' }, { beat: 3, text: 'D7/F#' }]);
+      expect(voiceToString(score.measures[0].staves[0].voices[0])).toBe('D5/q."Sing" C5/8"a" Bb4/h~"song"');
+      expect(voiceToString(score.measures[1].staves[0].voices[0])).toBe('Bb4/q r/q F4/8"of" G4/8"six-" A4/q');
+      expect(summary).toEqual({ chords: 2, lyrics: 5, uneven: [1] });
+    } finally {
+      globalThis.fetch = original;
+    }
   });
 });

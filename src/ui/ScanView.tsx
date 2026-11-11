@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from './Icons';
 import { prepareImage, PreparedImage } from '../omr/image';
-import { scanPages } from '../omr/client';
+import { extrasConfig, scanPages } from '../omr/client';
 import { TranscribeProgress } from '../omr/transcribe';
 import { Score } from '../model/types';
 import { Settings } from '../storage';
@@ -155,6 +155,7 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey, in
     }
   }
 
+  const extras = extrasConfig(settings);
   const elapsed = Math.max(0, Math.round((now - started) / 1000));
   const readyCount = pages.filter((p) => p.prepared).length;
 
@@ -253,7 +254,13 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey, in
           </div>
         )}
         {pages.length > 0 && !busy && settings.engine === 'local' && (
-          <p className="hint">Reads the notes and rhythms on your device; nothing is uploaded. About 1–3 minutes a page{localMB ? `; the first time it downloads about ${localMB} MB, so use Wi‑Fi` : ''}. Flat, sharp, evenly lit photos read best.</p>
+          <p className="hint">Reads the notes and rhythms on your device; nothing is uploaded. About 1–3 minutes a page{localMB ? `; the first time it downloads about ${localMB} MB, so use Wi‑Fi` : ''}. Flat, sharp, evenly lit photos read best.{' '}
+            {extras
+              ? `Then the photo is sent to ${extras.model} for the title, tempo, chord symbols and lyrics.`
+              : settings.localExtras
+                ? <>To also get the title, chord symbols and lyrics, <button className="link" onClick={onNeedKey}>add an OpenRouter key in Settings</button>.</>
+                : ''}
+          </p>
         )}
         {pages.length > 0 && !busy && settings.engine === 'claude' && (
           <div className="field-row">

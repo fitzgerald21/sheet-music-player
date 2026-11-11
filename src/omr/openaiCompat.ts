@@ -16,7 +16,7 @@ export const COMPAT_PRESETS: { id: string; label: string; baseUrl: string; examp
   { id: 'custom', label: 'Other (OpenAI-compatible)', baseUrl: '', example: 'model id' },
 ];
 
-function extractJson(text: string): unknown {
+export function extractJson(text: string): unknown {
   const t = text.trim().replace(/^```(?:json)?\s*/i, '').replace(/```\s*$/, '');
   try {
     return JSON.parse(t);

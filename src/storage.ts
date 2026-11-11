@@ -69,6 +69,8 @@ export type Engine = 'local' | 'claude' | 'compat' | 'audiveris';
 
 export interface Settings {
   engine: Engine;
+  /** After an on-device scan, ask the AI service below for the title, tempo, chords and lyrics. */
+  localExtras: boolean;
   compatPreset: string;
   compatBaseUrl: string;
   compatKey: string;
@@ -83,6 +85,7 @@ export interface Settings {
 
 export const DEFAULT_SETTINGS: Settings = {
   engine: 'local',
+  localExtras: true,
   compatPreset: 'openrouter',
   compatBaseUrl: 'https://openrouter.ai/api/v1',
   compatKey: '',

@@ -5,7 +5,8 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { PageImage, PagesProgress, transcribePages, transcribePagesWith } from './transcribe';
 import { PageTranscription } from './schema';
-import { transcribePageCompat } from './openaiCompat';
+import { CompatConfig, transcribePageCompat } from './openaiCompat';
+import { DEFAULT_EXTRAS_MODEL } from './annotate';
 import { ConvertResult, convertPages } from './convert';
 import { Settings } from '../storage';
 import { mergeScores } from '../model/merge';
@@ -85,6 +86,13 @@ export async function transcribe(images: PageImage[], settings: Settings, onProg
   });
 }
 
+/** The AI service that adds title, chords and lyrics to an on-device scan, if one is set up. */
+export function extrasConfig(settings: Settings): CompatConfig | null {
+  if (settings.engine !== 'local' || !settings.localExtras || !settings.compatKey.trim()) return null;
+  const model = settings.compatModel.trim() || (/openrouter\.ai/.test(settings.compatBaseUrl) ? DEFAULT_EXTRAS_MODEL : '');
+  return model ? { baseUrl: settings.compatBaseUrl, apiKey: settings.compatKey.trim(), model } : null;
+}
+
 /** Scan pages with the configured engine and return a score. */
 export async function scanPages(images: PageImage[], settings: Settings, onProgress: (p: PagesProgress) => void, signal: AbortSignal): Promise<ConvertResult> {
   if (settings.engine === 'compat') {
@@ -119,20 +127,43 @@ export async function scanPages(images: PageImage[], settings: Settings, onProgr
     const { parseMusicXML } = await import('../importers/musicxml');
     const scores: ReturnType<typeof parseMusicXML>[] = [];
     const warnings: string[] = [];
-    result.pages.forEach((p, i) => {
-      if (!p.xml) {
-        warnings.push(`Page ${i + 1} could not be read: ${p.error ?? 'unknown problem'}`);
-        return;
-      }
-      const s = parseMusicXML(p.xml);
-      scores.push(s);
-      say(i, 'Done', 'done', s.measures.length);
-    });
-    if (!scores.length) throw new Error(warnings.join(' ') || 'No music was found on these pages.');
-    const score = mergeScores(scores);
+    const extras = extrasConfig(settings);
+    const added = { chords: 0, lyrics: 0, pages: 0 };
+    await Promise.all(
+      result.pages.map(async (p, i) => {
+        if (!p.xml) {
+          warnings.push(`Page ${i + 1} could not be read: ${p.error ?? 'unknown problem'}`);
+          return;
+        }
+        const s = parseMusicXML(p.xml);
+        scores[i] = s;
+        if (extras) {
+          say(i, 'Reading the title, chords and lyrics…', 'writing');
+          try {
+            const { readExtras, applyExtras } = await import('./annotate');
+            const summary = applyExtras(s, await readExtras(extras, images[i], s, signal));
+            added.chords += summary.chords;
+            added.lyrics += summary.lyrics;
+            added.pages++;
+          } catch (e) {
+            if (signal.aborted) throw e;
+            warnings.push(`Page ${i + 1}: the title, chords and lyrics could not be added (${e instanceof Error ? e.message : String(e)})`);
+          }
+        }
+        say(i, 'Done', 'done', s.measures.length);
+      }),
+    );
+    const read = scores.filter(Boolean);
+    if (!read.length) throw new Error(warnings.join(' ') || 'No music was found on these pages.');
+    const score = mergeScores(read);
     completeChordTies(score);
     if (!score.title || score.title === 'Untitled') score.title = 'Scanned music';
-    score.notes = [...(score.notes ?? []), 'Read on this device with homr. Notes and rhythms only: add the title, tempo, chord symbols and lyrics yourself.'];
+    score.notes = [
+      ...(score.notes ?? []),
+      added.pages
+        ? `Notes and rhythms were read on this device with homr. The title, tempo, ${added.chords} chord symbols and ${added.lyrics} lyric syllables were added by ${extras!.model} – check them against the page.`
+        : 'Read on this device with homr. Notes and rhythms only: add the title, tempo, chord symbols and lyrics yourself.',
+    ];
     return { score, warnings, repaired: [] };
   }
   if (settings.engine === 'audiveris') {
