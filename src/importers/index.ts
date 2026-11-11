@@ -8,7 +8,15 @@ export type ImportResult = { kind: 'score'; scores: Score[] } | { kind: 'images'
 
 const ext = (name: string) => (/\.([a-z0-9]+)$/i.exec(name)?.[1] ?? '').toLowerCase();
 
-export const IMPORT_ACCEPT = '.musicxml,.mxl,.xml,.mid,.midi,.abc,.json,.pdf,image/*,application/pdf,audio/midi';
+// Phones grey out any file whose extension they don't recognise (.musicxml, .mxl, .abc), so on
+// touch devices the picker is left unfiltered and importFile decides from the file's contents.
+const TOUCH_DEVICE =
+  typeof navigator !== 'undefined' &&
+  (/iPad|iPhone|iPod|Android/.test(navigator.userAgent) || (navigator.maxTouchPoints > 1 && /Mac/.test(navigator.platform ?? '')));
+
+export const IMPORT_ACCEPT: string | undefined = TOUCH_DEVICE
+  ? undefined
+  : '.musicxml,.mxl,.xml,.mid,.midi,.abc,.json,.pdf,image/*,application/pdf,audio/midi';
 
 export async function importFile(file: File): Promise<ImportResult> {
   const e = ext(file.name);
@@ -21,7 +29,10 @@ export async function importFile(file: File): Promise<ImportResult> {
   if (e === 'mid' || e === 'midi' || (bytes[0] === 0x4d && bytes[1] === 0x54 && bytes[2] === 0x68 && bytes[3] === 0x64)) {
     return { kind: 'score', scores: [midiToScore(bytes, file.name)] };
   }
-  if (e === 'mxl' || e === 'musicxml' || (e === 'xml' && /score-(partwise|timewise)/.test(new TextDecoder().decode(bytes.slice(0, 4000))))) {
+  // MusicXML is recognised by content too, because phones sometimes rename or strip the extension
+  const isZip = bytes[0] === 0x50 && bytes[1] === 0x4b;
+  const isXmlScore = /<score-(partwise|timewise)/.test(new TextDecoder().decode(bytes.slice(0, 4000)));
+  if (e === 'mxl' || e === 'musicxml' || isXmlScore || isZip) {
     return { kind: 'score', scores: [parseMusicXML(musicXmlText(bytes))] };
   }
   const text = new TextDecoder().decode(bytes);

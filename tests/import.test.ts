@@ -91,3 +91,15 @@ describe('ABC import', () => {
     expect(voiceToString(s.measures[1].staves[0].voices[0])).toBe('B4/8. C5/16 C#5/8 C5/8 D4+F#4+A4/q r/q');
   });
 });
+
+describe('importFile', () => {
+  it('recognises MusicXML by content when the name has no useful extension', async () => {
+    const { importFile } = await import('../src/importers');
+    const xml = toMusicXML(demoScore()).xml;
+    for (const name of ['score', 'score.txt', 'score.musicxml']) {
+      const r = await importFile(new File([xml], name));
+      expect(r.kind).toBe('score');
+      if (r.kind === 'score') expect(r.scores[0].title).toBe('Minuet in G');
+    }
+  });
+});

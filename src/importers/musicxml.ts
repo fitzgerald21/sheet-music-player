@@ -72,7 +72,8 @@ interface PartMeasure {
 }
 
 export function parseMusicXML(xmlText: string): Score {
-  const doc = new DOMParser().parseFromString(xmlText, 'application/xml');
+  // the text is already decoded, so the declaration (and any byte-order mark) is dropped rather than re-interpreted
+  const doc = new DOMParser().parseFromString(xmlText.replace(/^\uFEFF?\s*<\?xml[^>]*\?>/, ''), 'application/xml');
   const root = doc.documentElement;
   if (!root || root.tagName === 'parsererror' || doc.getElementsByTagName('parsererror').length) throw new Error('This file is not valid MusicXML.');
   if (root.tagName === 'score-timewise') throw new Error('Timewise MusicXML is not supported – export as partwise MusicXML.');
