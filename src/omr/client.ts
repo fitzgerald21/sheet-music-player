@@ -9,6 +9,7 @@ import { transcribePageCompat } from './openaiCompat';
 import { ConvertResult, convertPages } from './convert';
 import { Settings } from '../storage';
 import { mergeScores } from '../model/merge';
+import { completeChordTies } from '../model/fix';
 
 const api = (path: string) => `${import.meta.env.BASE_URL}api/${path}`;
 
@@ -129,6 +130,7 @@ export async function scanPages(images: PageImage[], settings: Settings, onProgr
     });
     if (!scores.length) throw new Error(warnings.join(' ') || 'No music was found on these pages.');
     const score = mergeScores(scores);
+    completeChordTies(score);
     if (!score.title || score.title === 'Untitled') score.title = 'Scanned music';
     score.notes = [...(score.notes ?? []), 'Read on this device with homr. Notes and rhythms only: add the title, tempo, chord symbols and lyrics yourself.'];
     return { score, warnings, repaired: [] };

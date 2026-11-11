@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { parseVoice, voiceToString } from '../src/model/tokens';
-import { fitMeasure, measureLengths } from '../src/model/fix';
+import { completeChordTies, fitMeasure, measureLengths } from '../src/model/fix';
 import { transposeScore } from '../src/model/transpose';
 import { buildPlan, playbackOrder } from '../src/model/playback';
 import { toMusicXML } from '../src/model/musicxml';
@@ -168,5 +168,24 @@ describe('exports', () => {
     const bytes = toMidi(s, buildPlan(s, { humanize: false }));
     expect(String.fromCharCode(...bytes.slice(0, 4))).toBe('MThd');
     expect(bytes.length).toBeGreaterThan(500);
+  });
+});
+
+describe('chord ties', () => {
+  it('ties every shared note when one note of a chord is tied over a barline', () => {
+    const a = parseVoice('C4+E4+G4/8').events;
+    const b = parseVoice('C4+E4+G4/h D4/q D4/q').events;
+    a[0].pitches[1].tie = true;
+    const score = { measures: [{ staves: [{ voices: [a] }] }, { staves: [{ voices: [b] }] }] } as unknown as Score;
+    expect(completeChordTies(score)).toBe(2);
+    expect(a[0].pitches.every((p) => p.tie)).toBe(true);
+    expect(b[1].pitches[0].tie).toBeFalsy();
+  });
+  it('leaves untied chords and notes the next chord lacks alone', () => {
+    const a = parseVoice('C4+E4/q C4+E4/q C4+G4/q').events;
+    a[1].pitches[0].tie = true;
+    const score = { measures: [{ staves: [{ voices: [a] }] }] } as unknown as Score;
+    expect(completeChordTies(score)).toBe(0);
+    expect(a[0].pitches.some((p) => p.tie)).toBe(false);
   });
 });

@@ -1,4 +1,5 @@
 import { decompose, eventTicks, measureTicks, voiceTicks } from './duration';
+import { midiOf } from './pitch';
 import { Measure, NoteEvent, Score, newId } from './types';
 
 export function restEvent(dur: NoteEvent['dur'], dots = 0, triplet = false): NoteEvent {
@@ -112,4 +113,43 @@ export function fitScore(score: Score): number[] {
     if (fitMeasure(m, lens[i], staffCount)) fixed.push(i);
   });
   return fixed;
+}
+
+/**
+ * Completes ties between chords. Music readers often catch only one of the curves that join two
+ * chords, so the other notes would be struck again. When a note of a chord is tied to the next
+ * chord, every other note that both chords share is tied too. A two-chord "slur" between chords
+ * with the same notes is also a tie. Returns how many ties were added.
+ */
+export function completeChordTies(score: Score): number {
+  let added = 0;
+  const previous = new Map<string, NoteEvent>();
+  for (const m of score.measures) {
+    m.staves.forEach((staff, s) =>
+      staff.voices.forEach((voice, v) => {
+        const key = `${s}|${v}`;
+        for (const e of voice) {
+          if (e.grace) continue;
+          const before = previous.get(key);
+          previous.set(key, e);
+          if (!before || before.rest || e.rest || before.pitches.length < 2) continue;
+          const now = new Set(e.pitches.map(midiOf));
+          const same = before.pitches.length === e.pitches.length && before.pitches.every((p) => now.has(midiOf(p)));
+          const slurred = same && before.slurStart && e.slurEnd;
+          if (!slurred && !before.pitches.some((p) => p.tie && now.has(midiOf(p)))) continue;
+          for (const p of before.pitches) {
+            if (!p.tie && now.has(midiOf(p))) {
+              p.tie = true;
+              added++;
+            }
+          }
+          if (slurred) {
+            delete before.slurStart;
+            delete e.slurEnd;
+          }
+        }
+      }),
+    );
+  }
+  return added;
 }
