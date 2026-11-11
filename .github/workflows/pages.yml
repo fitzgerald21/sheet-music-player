@@ -23,6 +23,8 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      # models and runtime for "scan on this device" (about 175 MB, from the homr project and PyPI)
+      - run: npm run fetch-homr
       - run: npm run build
         env:
           BASE_PATH: /${{ github.event.repository.name }}/

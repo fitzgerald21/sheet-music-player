@@ -123,7 +123,7 @@ export interface Score {
   /** Notes about the transcription (uncertain passages etc.). */
   notes?: string[];
   /** How the score was made, for the notes banner. */
-  source?: 'claude' | 'compat' | 'audiveris' | 'import';
+  source?: 'claude' | 'compat' | 'audiveris' | 'local' | 'import';
 }
 
 export interface GlobalStaff {

@@ -5,3 +5,5 @@ dist
 *.smp.json
 !public/**/*.json
 .env
+# models and runtime for on-device scanning, downloaded by `npm run fetch-homr`
+public/homr

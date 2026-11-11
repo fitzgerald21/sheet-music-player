@@ -8,11 +8,13 @@
     "build": "tsc -p . && vite build",
     "start": "NODE_ENV=production tsx server/index.ts",
     "test": "vitest run",
-    "transcribe": "tsx scripts/transcribe.ts"
+    "transcribe": "tsx scripts/transcribe.ts",
+    "fetch-homr": "node scripts/fetch-homr.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.5.0",
     "fflate": "^0.8.3",
+    "onnxruntime-web": "1.31.1",
     "opensheetmusicdisplay": "^2.2.1",
     "pdfjs-dist": "^6.5.438",
     "react": "^19.3.1",

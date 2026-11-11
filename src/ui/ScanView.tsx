@@ -36,6 +36,27 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey, in
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<Record<string, TranscribeProgress>>({});
   const [error, setError] = useState<string | null>(null);
+  const [localMB, setLocalMB] = useState(0);
+  useEffect(() => {
+    void import('../omr/local').then((m) => m.localDownloadMB()).then(setLocalMB);
+  }, []);
+  // reading on the device stops if the phone locks, so keep the screen awake while busy
+  useEffect(() => {
+    if (!busy) return;
+    type Lock = { release: () => Promise<void> };
+    const wl = (navigator as Navigator & { wakeLock?: { request: (t: 'screen') => Promise<Lock> } }).wakeLock;
+    let lock: Lock | null = null;
+    let gone = false;
+    const take = () => void wl?.request('screen').then((l) => (gone ? void l.release() : (lock = l))).catch(() => undefined);
+    const onVisible = () => document.visibilityState === 'visible' && take();
+    take();
+    document.addEventListener('visibilitychange', onVisible);
+    return () => {
+      gone = true;
+      document.removeEventListener('visibilitychange', onVisible);
+      void lock?.release().catch(() => undefined);
+    };
+  }, [busy]);
   const [started, setStarted] = useState(0);
   const [now, setNow] = useState(Date.now());
   const abortRef = useRef<AbortController | null>(null);
@@ -100,8 +121,7 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey, in
     abortRef.current = ac;
     try {
       const groups: PageItem[][] = combine ? [ready] : ready.map((p) => [p]);
-      const scores = await Promise.all(
-        groups.map(async (group) => {
+      const scanGroup = async (group: PageItem[]) => {
           const { score, warnings, repaired } = await scanPages(
             group.map((g) => g.prepared!.image),
             settings,
@@ -112,8 +132,12 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey, in
           if (repaired.length) score.notes = [...(score.notes ?? []), `Rhythm was auto-corrected in measure${repaired.length > 1 ? 's' : ''} ${repaired.map((i) => i + 1).slice(0, 12).join(', ')}${repaired.length > 12 ? '…' : ''} – worth a check.`];
           if (warnings.length) score.notes = [...(score.notes ?? []), ...warnings.slice(0, 5)];
           return score;
-        }),
-      );
+      };
+      let scores: Score[] = [];
+      if (settings.engine === 'local') {
+        // reading on the device is heavy: one piece at a time
+        for (const group of groups) scores.push(await scanGroup(group));
+      } else scores = await Promise.all(groups.map(scanGroup));
       onDone(scores);
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
@@ -171,8 +195,8 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey, in
                       <div className="page-progress">
                         <div className={`spinner ${pr?.phase === 'done' ? 'done' : ''}`} />
                         <span>
-                          {pr ? PHASE_LABEL[pr.phase] : combine && i > 0 ? 'Waiting for page 1…' : 'Starting…'}
-                          {pr && pr.measures > 0 && pr.phase !== 'done' ? ` ${pr.measures} measures` : ''}
+                          {pr ? pr.label ?? PHASE_LABEL[pr.phase] : settings.engine !== 'local' && combine && i > 0 ? 'Waiting for page 1…' : 'Starting…'}
+                          {pr && !pr.label && pr.measures > 0 && pr.phase !== 'done' ? ` ${pr.measures} measures` : ''}
                           {pr?.phase === 'done' ? ` · ${pr.measures} measures` : ''}
                         </span>
                       </div>
@@ -217,6 +241,20 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey, in
         )}
         {pages.length > 1 && combine && !busy && <p className="hint">Put the pages in order. If they have printed page numbers they'll be sorted automatically.</p>}
 
+        {pages.length > 0 && !busy && (
+          <div className="field-row">
+            <label htmlFor="reader">Read with</label>
+            <select id="reader" value={settings.engine} onChange={(e) => onSettings({ ...settings, engine: e.target.value as Settings['engine'] })}>
+              <option value="local">This device – free, private</option>
+              <option value="claude">Claude</option>
+              <option value="compat">Other AI model</option>
+              <option value="audiveris">Audiveris (server)</option>
+            </select>
+          </div>
+        )}
+        {pages.length > 0 && !busy && settings.engine === 'local' && (
+          <p className="hint">Reads the notes and rhythms on your device; nothing is uploaded. About 1–3 minutes a page{localMB ? `; the first time it downloads about ${localMB} MB, so use Wi‑Fi` : ''}. Flat, sharp, evenly lit photos read best.</p>
+        )}
         {pages.length > 0 && !busy && settings.engine === 'claude' && (
           <div className="field-row">
             <label htmlFor="acc">Accuracy</label>
@@ -232,7 +270,10 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey, in
 
         {busy && (
           <p className="hint center">
-            {settings.engine === 'audiveris' ? 'Audiveris is reading your music' : settings.engine === 'compat' ? 'The model is reading your music' : 'Claude is reading your music'} – a dense page usually takes 1–4 minutes. ({Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, '0')})
+            {settings.engine === 'local'
+              ? 'Reading on this device – keep this screen open. A page usually takes 1–3 minutes.'
+              : `${settings.engine === 'audiveris' ? 'Audiveris is reading your music' : settings.engine === 'compat' ? 'The model is reading your music' : 'Claude is reading your music'} – a dense page usually takes 1–4 minutes.`}{' '}
+            ({Math.floor(elapsed / 60)}:{String(elapsed % 60).padStart(2, '0')})
           </p>
         )}
       </div>

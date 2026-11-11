@@ -301,11 +301,17 @@ export function SettingsPanel({ settings, onChange, onClose, serverKey, audiveri
       <div className="field">
         <label htmlFor="engine">Read photos with</label>
         <select id="engine" value={settings.engine} onChange={(e) => onChange({ ...settings, engine: e.target.value as Engine })}>
-          <option value="claude">Claude (recommended)</option>
+          <option value="local">This device – free, private, no key</option>
+          <option value="claude">Claude</option>
           <option value="compat">OpenRouter / DeepInfra / other AI model</option>
           <option value="audiveris">Audiveris – free, algorithmic{audiveris ? '' : ' (not installed on server)'}</option>
         </select>
       </div>
+      {settings.engine === 'local' && (
+        <p className="hint">
+          Photos are read on this device by <a href="https://github.com/liebharc/homr" target="_blank" rel="noreferrer">homr</a>, so nothing is uploaded and there is nothing to pay. It reads notes and rhythms well, but not the title, tempo, chord symbols or lyrics. The first scan downloads the reader (about 200 MB, kept for next time); after that a page takes roughly 1–3 minutes. It needs a fairly recent phone or computer.
+        </p>
+      )}
       {settings.engine === 'claude' && (
         <>
           <div className="field">
@@ -380,7 +386,7 @@ export function SettingsPanel({ settings, onChange, onClose, serverKey, audiveri
       <label className="check"><input type="checkbox" checked={settings.humanize} onChange={(e) => onChange({ ...settings, humanize: e.target.checked })} /> Human feel (tiny timing & touch variations)</label>
       <label className="check"><input type="checkbox" checked={settings.playChords} onChange={(e) => onChange({ ...settings, playChords: e.target.checked })} /> Also play chord symbols</label>
       <h3 className="sub-h">About</h3>
-      <p className="hint">Piano samples: Salamander Grand Piano by Alexander Holm (CC BY 3.0). Notation rendering: OpenSheetMusicDisplay. Sound: Tone.js.</p>
+      <p className="hint">Piano samples: Salamander Grand Piano by Alexander Holm (CC BY 3.0). Notation rendering: OpenSheetMusicDisplay. Sound: Tone.js. On-device music reading: homr by Christian Liebhardt and contributors (AGPL-3.0), run with Pyodide and ONNX Runtime.</p>
     </Sheet>
   );
 }

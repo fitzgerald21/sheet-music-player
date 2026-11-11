@@ -16,6 +16,8 @@ export interface TranscribeOptions {
 
 export interface TranscribeProgress {
   phase: 'sending' | 'thinking' | 'writing' | 'done';
+  /** shown instead of the standard wording for the phase */
+  label?: string;
   /** number of measures written so far */
   measures: number;
   chars: number;

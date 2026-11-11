@@ -92,6 +92,47 @@ export async function scanPages(images: PageImage[], settings: Settings, onProgr
     const pages = await transcribePagesWith((img, ctx, p) => transcribePageCompat(cfg, img, ctx, p, signal), images, onProgress);
     return convertPages(pages);
   }
+  if (settings.engine === 'local') {
+    const { scanLocal, localScanAvailable } = await import('./local');
+    if (!(await localScanAvailable())) throw new Error('On-device scanning is not included in this copy of the app. Run “npm run fetch-homr” and rebuild, or pick another reader in Settings.');
+    const buffers = images.map((img) => Uint8Array.from(atob(img.data), (c) => c.charCodeAt(0)).buffer);
+    const say = (page: number, label: string, phase: 'thinking' | 'writing' | 'done' = 'thinking', measures = 0) => onProgress({ page, progress: { phase, label, measures, chars: 0 } });
+    const started = new Set<number>();
+    const result = await scanLocal(
+      buffers,
+      (p) => {
+        const pct = p.fraction != null ? ` ${Math.round(p.fraction * 100)}%` : '';
+        if (p.page < 0) {
+          // shared work (the one-time download) is shown on every page that has not started yet
+          images.forEach((_, i) => !started.has(i) && say(i, `Getting the music reader ready…${p.detail ? ` ${p.detail}` : ''}`));
+          return;
+        }
+        started.add(p.page);
+        if (p.phase === 'segment') say(p.page, `Finding the notes…${pct}`);
+        else if (p.phase === 'detect') say(p.page, 'Finding the staff lines…');
+        else if (p.phase === 'read') say(p.page, p.detail ?? 'Reading the music…', 'writing');
+        else if (p.phase === 'write') say(p.page, 'Writing the score…', 'writing');
+      },
+      signal,
+    );
+    const { parseMusicXML } = await import('../importers/musicxml');
+    const scores: ReturnType<typeof parseMusicXML>[] = [];
+    const warnings: string[] = [];
+    result.pages.forEach((p, i) => {
+      if (!p.xml) {
+        warnings.push(`Page ${i + 1} could not be read: ${p.error ?? 'unknown problem'}`);
+        return;
+      }
+      const s = parseMusicXML(p.xml);
+      scores.push(s);
+      say(i, 'Done', 'done', s.measures.length);
+    });
+    if (!scores.length) throw new Error(warnings.join(' ') || 'No music was found on these pages.');
+    const score = mergeScores(scores);
+    if (!score.title || score.title === 'Untitled') score.title = 'Scanned music';
+    score.notes = [...(score.notes ?? []), 'Read on this device with homr. Notes and rhythms only: add the title, tempo, chord symbols and lyrics yourself.'];
+    return { score, warnings, repaired: [] };
+  }
   if (settings.engine === 'audiveris') {
     if (!(await serverInfo()).audiveris) throw new Error('Audiveris is not installed on the server. See the README (“Free algorithmic scanning”).');
     images.forEach((_, i) => onProgress({ page: i, progress: { phase: 'sending', measures: 0, chars: 0 } }));

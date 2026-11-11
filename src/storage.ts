@@ -64,7 +64,8 @@ export function deleteScore(id: string) {
   safeSet(INDEX_KEY, JSON.stringify(listLibrary().filter((e) => e.id !== id)));
 }
 
-export type Engine = 'claude' | 'compat' | 'audiveris';
+/** 'local' reads on the device itself (homr); the others send the photo to a service. */
+export type Engine = 'local' | 'claude' | 'compat' | 'audiveris';
 
 export interface Settings {
   engine: Engine;
@@ -81,7 +82,7 @@ export interface Settings {
 }
 
 export const DEFAULT_SETTINGS: Settings = {
-  engine: 'claude',
+  engine: 'local',
   compatPreset: 'openrouter',
   compatBaseUrl: 'https://openrouter.ai/api/v1',
   compatKey: '',

@@ -51,9 +51,12 @@ Settings → *Read photos with*:
 
 | Engine | Cost | Good at | Weak at |
 | --- | --- | --- | --- |
-| **Claude** (default) | API usage | Phone photos, lyrics, chord symbols, piano-vocal layouts, D.C./coda marks | Can occasionally mis-hear a rhythm or ledger line (the app repairs rhythms and lists what it was unsure of) |
+| **This device** (default; [homr](https://github.com/liebharc/homr) in the browser) | Free, no key, nothing uploaded | Notes and rhythms from phone photos; works on GitHub Pages | No title, lyrics or chord symbols; 1–3 minutes a page; a one-time download of about 200 MB; needs a phone or computer with enough free memory |
+| **Claude** | API usage | Phone photos, lyrics, chord symbols, piano-vocal layouts, D.C./coda marks | Can occasionally mis-hear a rhythm or ledger line (the app repairs rhythms and lists what it was unsure of) |
 | **OpenRouter / DeepInfra / any OpenAI-compatible API** | That service's prices | Lets you use other vision models or credits you already have | Most open models are much less accurate at reading music |
 | **Audiveris** (open-source, algorithmic) | Free | Clean, flat scans and PDFs (e.g. from IMSLP) | Phone photos with perspective, curl or shadows; lyrics and chord symbols |
+
+**Scanning on the device with homr.** `npm run fetch-homr` downloads homr's three ONNX models, its Python package and the ONNX Runtime WebAssembly files into `public/homr/` (about 160 MB, not committed; the Pages workflow runs it before building). In the browser, homr's Python image processing runs in [Pyodide](https://pyodide.org) (loaded from jsDelivr) and its networks in [ONNX Runtime Web](https://onnxruntime.ai); see `src/omr/local`. Without those files the option reports that it is not included. homr is licensed AGPL-3.0, so a copy of this app that ships it must offer its source under AGPL-compatible terms.
 
 **Free algorithmic scanning with Audiveris.** [Audiveris](https://github.com/Audiveris/audiveris) is the leading open-source optical music recognition program. It finds staff lines, noteheads, stems and beams with classic image processing plus small neural classifiers. It runs on the computer that serves the app, not in the browser and not on GitHub Pages:
 
@@ -73,7 +76,7 @@ Then use **Import** in the library to open `song.smp.json`.
 
 ### Deploy to GitHub Pages
 
-The workflow in `.github/workflows/pages.yml` builds and publishes the app on every push to `main`. Turn it on once under **Settings → Pages → Source: GitHub Actions**. On Pages there is no server, so each user adds their own key in Settings.
+The workflow in `.github/workflows/pages.yml` builds and publishes the app on every push to `main`. Turn it on once under **Settings → Pages → Source: GitHub Actions**. On Pages there is no server: scanning on the device works without a key, and for the Claude or OpenRouter/DeepInfra readers each user adds their own key in Settings.
 
 ## Tips for good scans
 

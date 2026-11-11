@@ -585,7 +585,7 @@ export function App() {
       <>
         <Library
           entries={library}
-          needsKey={settings.engine === 'claude' ? !serverKey && !settings.apiKey : settings.engine === 'compat' ? !settings.compatKey : !audiveris}
+          needsKey={settings.engine === 'local' ? false : settings.engine === 'claude' ? !serverKey && !settings.apiKey : settings.engine === 'compat' ? !settings.compatKey : !audiveris}
           onFind={() => setView('find')}
           onOpen={(id) => {
             const s = loadScore(id);
