@@ -1,8 +1,7 @@
 // "Scan on this device": reads sheet music with homr (AGPL-3.0, https://github.com/liebharc/homr)
 // entirely in the browser. This file runs on the page and directs two kinds of worker:
 //   py.worker – homr's Python image processing, in Pyodide
-//   nn.worker – homr's three neural networks, in onnxruntime-web; one worker per network, closed
-//               afterwards so its memory is returned before the next one starts
+//   nn.worker – homr's three neural networks, in onnxruntime-web, loaded one after the other
 import type { DecoderConstants } from './py.worker';
 import type { DownloadEvent } from './nn.worker';
 import { RpcClient } from './rpc';
@@ -110,9 +109,22 @@ export async function scanLocal(images: ArrayBuffer[], onProgress: (p: LocalProg
     pyReady.catch(() => undefined);
 
     // ---- 1. find the symbols on every page (segmentation network) ----------------------------
+    // Starting WebAssembly can fail when the browser has not yet let go of an earlier scan's memory
+    // (iOS Safari). A short wait usually cures it.
     let nn = start('nn');
-    const { threads } = await nn.call<{ threads: number }>('configure', base + 'ort/');
-    await timed('loadModels', nn.call('loadSegnet', base + m.models.segnet.file, threads));
+    let threads = 1;
+    for (let attempt = 1; ; attempt++) {
+      try {
+        ({ threads } = await nn.call<{ threads: number }>('configure', base + 'ort/'));
+        await timed('loadModels', nn.call('loadSegnet', base + m.models.segnet.file, threads));
+        break;
+      } catch (e) {
+        if (signal.aborted || attempt >= 3 || !/memory|backend/i.test(String(e))) throw e;
+        stop(nn);
+        await new Promise((r) => setTimeout(r, 2500));
+        nn = start('nn');
+      }
+    }
     const constants = await pyReady;
     for (let p = 0; p < pages; p++) {
       onProgress({ page: p, phase: 'segment', fraction: 0 });
@@ -131,7 +143,6 @@ export async function scanLocal(images: ArrayBuffer[], onProgress: (p: LocalProg
         fail(p, e);
       }
     }
-    stop(nn);
 
     // ---- 2. find the staffs (image processing in Python) -----------------------------------------
     const staffs: number[] = [];
@@ -145,42 +156,48 @@ export async function scanLocal(images: ArrayBuffer[], onProgress: (p: LocalProg
       }
     }
 
-    // ---- 3. read every staff: encoder network, then decoder network, page by page ---------------
-    for (let p = 0; p < pages; p++) {
-      if (!alive(p) || !staffs[p]) continue;
-      const count = staffs[p];
-      const step = (done: number, detail: string) => onProgress({ page: p, phase: 'read', fraction: done / (count * 5), detail });
-      try {
-        step(0, 'Looking at each line…');
-        nn = start('nn');
-        await nn.call('configure', base + 'ort/');
-        await timed('loadModels', nn.call('loadEncoder', base + m.models.encoder.file, threads));
-        const encoded: { encoded: Float32Array; dim: number }[] = [];
-        await timed('read', async () => {
-          for (let s = 0; s < count; s++) {
-            const input = await py.call<Float32Array>('staff', p, s);
-            encoded.push(await nn.call('encode', input));
-            step(s + 1, 'Looking at each line…');
-          }
-        });
-        stop(nn);
-
-        nn = start('nn');
-        await nn.call('configure', base + 'ort/');
-        await timed('loadModels', nn.call('loadDecoder', base + m.models.decoder.file, threads));
-        downloading = false;
-        await timed('read', async () => {
-          for (let s = 0; s < count; s++) {
-            step(count + s * 4, `Reading line ${s + 1} of ${count}…`);
-            const { tokens, attention } = await nn.call<{ tokens: Int32Array; attention: Float32Array }>('decode', encoded[s].encoded, encoded[s].dim, constants);
-            await py.call('staffResult', p, s, tokens, attention);
-          }
-        });
-      } catch (e) {
-        fail(p, e);
+    // ---- 3. read every staff: the encoder network on all pages, then the decoder network ---------
+    const todo = () => images.map((_, p) => p).filter((p) => alive(p) && staffs[p]);
+    const step = (p: number, done: number, detail: string) => onProgress({ page: p, phase: 'read', fraction: done / (staffs[p] * 5), detail });
+    const encoded: { encoded: Float32Array; dim: number }[][] = [];
+    if (todo().length) {
+      todo().forEach((p) => step(p, 0, 'Looking at each line…'));
+      await timed('loadModels', nn.call('loadEncoder', base + m.models.encoder.file, threads));
+      for (const p of todo()) {
+        encoded[p] = [];
+        try {
+          await timed('read', async () => {
+            for (let s = 0; s < staffs[p]; s++) {
+              const input = await py.call<Float32Array>('staff', p, s);
+              encoded[p].push(await nn.call('encode', input));
+              step(p, s + 1, 'Looking at each line…');
+            }
+          });
+        } catch (e) {
+          fail(p, e);
+        }
       }
-      stop(nn);
     }
+    if (todo().length) {
+      await timed('loadModels', nn.call('loadDecoder', base + m.models.decoder.file, threads));
+      downloading = false;
+      for (const p of todo()) {
+        const count = staffs[p];
+        try {
+          await timed('read', async () => {
+            for (let s = 0; s < count; s++) {
+              step(p, count + s * 4, `Reading line ${s + 1} of ${count}…`);
+              const { tokens, attention } = await nn.call<{ tokens: Int32Array; attention: Float32Array }>('decode', encoded[p][s].encoded, encoded[p][s].dim, constants);
+              await py.call('staffResult', p, s, tokens, attention);
+            }
+          });
+        } catch (e) {
+          fail(p, e);
+        }
+        encoded[p] = [];
+      }
+    }
+    stop(nn);
 
     // ---- 4. write MusicXML -----------------------------------------------------------------------
     const results: LocalResult['pages'] = [];

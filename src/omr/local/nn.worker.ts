@@ -1,7 +1,8 @@
 /// <reference lib="webworker" />
 // The neural-network half of "Scan on this device": homr's ONNX models, run by onnxruntime-web.
-// A worker is started for one network at a time and then closed, which is the only way to give that
-// network's memory back (WebAssembly memory never shrinks).
+// One worker runs the three networks one after the other. Each is released before the next is loaded,
+// so they share the same WebAssembly memory instead of each needing its own: phones (iOS Safari above
+// all) refuse to start a WebAssembly program again and again on one page.
 import * as ort from 'onnxruntime-web/wasm';
 import type { DecoderConstants } from './py.worker';
 import { emit, serve } from './rpc';
@@ -205,12 +206,19 @@ let segnet: ort.InferenceSession | null = null;
 let encoder: ort.InferenceSession | null = null;
 let decoder: ort.InferenceSession | null = null;
 
+/** Gives a network's memory back to the shared heap before the next one is loaded. */
+async function releaseAll(): Promise<void> {
+  for (const session of [segnet, encoder, decoder]) await session?.release().catch(() => undefined);
+  segnet = encoder = decoder = null;
+}
+
 serve({
   configure(ortPath: string): { threads: number } {
     ort.env.wasm.wasmPaths = ortPath;
     return { threads: self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1 };
   },
   async loadSegnet(url: string, threads: number): Promise<void> {
+    await releaseAll();
     segnet = await load(url, threads);
   },
   /** patches: float32 [count, 3, 320, 320] → the class of every pixel, uint8 [count, 320, 320] */
@@ -219,6 +227,7 @@ serve({
     return pixelClasses(out.output.data as Float32Array, count);
   },
   async loadEncoder(url: string, threads: number): Promise<void> {
+    await releaseAll();
     encoder = await load(url, threads);
   },
   /** One staff image, float32 [1, 1, 256, 1280] → what the decoder reads, float32 [tokens, dim]. */
@@ -227,6 +236,7 @@ serve({
     return { encoded: out.data as Float32Array, dim: out.dims[2] };
   },
   async loadDecoder(url: string, threads: number): Promise<void> {
+    await releaseAll();
     decoder = await load(url, threads);
   },
   /** An encoded staff → the symbols on it. */
