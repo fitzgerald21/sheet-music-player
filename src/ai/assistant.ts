@@ -93,7 +93,8 @@ Reply with one JSON object and nothing else, in this compact form:
 
 How to choose:
 - Read the harmony from the bass and from the notes that fall on the beats; treat passing and neighbour notes as decoration.
-- Name each chord from the notes that are actually there. Do not write a seventh, a diminished or an altered chord unless its defining notes sound, and prefer the plain triad when a note is only passing through.
+- Name each chord from the notes that are actually there, no more and no fewer. When the seventh (or sixth, or ninth) sounds in the accompaniment or on a beat, write it: A7, D9, E6. Leave it out only when that note merely passes through in the melody. Check major against minor from the third that sounds, with the key signature applied. Do not write a diminished or altered chord unless its defining notes sound.
+- Name the chord from its bass note when the bass is a chord tone other than the root or sits under the chord: E6 rather than C#m/E over an E bass, Em/A when an Em chord sits over an A bass.
 - Prefer the name a player expects in this key: Eb/F rather than F7sus4 when the bass moves under a held chord, F2 or Fadd9 rather than Am7 over an F bass.
 - Put a symbol where the harmony changes, usually one to three per measure. Do not repeat a chord that has not changed, except at the start of a measure.
 - Write flats as "b" and sharps as "#": Bb, F#m7, Eb/F, Edim, F7sus4, Cmaj7, Gm/C.`;
