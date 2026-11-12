@@ -411,7 +411,7 @@ export function SettingsPanel({ settings, onChange, onClose, serverKey, audiveri
 }
 
 // ---------------- Chords ----------------
-export function ChordsPanel({ score, onApply, onClose, playChords, setPlayChords, ai }: { score: Score; onApply: (s: Score, msg: string) => void; onClose: () => void; playChords: boolean; setPlayChords: (b: boolean) => void; ai: CompatConfig | null }) {
+export function ChordsPanel({ score, onApply, onClose, playChords, setPlayChords, ai, chordsModel, setChordsModel }: { score: Score; onApply: (s: Score, msg: string) => void; onClose: () => void; playChords: boolean; setPlayChords: (b: boolean) => void; ai: CompatConfig | null; chordsModel: string; setChordsModel: (m: string) => void }) {
   const has = score.measures.some((m) => m.chords?.length);
   const [granularity, setGranularity] = useState<'auto' | 'measure' | 'beat'>('auto');
   const [overwrite, setOverwrite] = useState(!has);
@@ -426,7 +426,7 @@ export function ChordsPanel({ score, onApply, onClose, playChords, setPlayChords
     setBusy(true);
     setError(null);
     try {
-      const answer = await askAssistant(ai, score, 'Write the chord symbols for the whole piece.', [], { mode: 'chords', signal: ctl.signal });
+      const answer = await askAssistant({ ...ai, model: chordsModel.trim() || ai.model }, score, 'Write the chord symbols for the whole piece.', [], { mode: 'chords', signal: ctl.signal });
       // without "replace", measures that already have chord symbols are left alone
       if (!overwrite) answer.measures = answer.measures.filter((m) => !score.measures[m.m - 1]?.chords?.length);
       const res = applyAnswer(score, answer, 'chords');
@@ -471,6 +471,12 @@ export function ChordsPanel({ score, onApply, onClose, playChords, setPlayChords
         An AI model reads the notes and writes the chords a musician would, without looking at the detector’s guesses. It is better at slash chords,
         added-note chords and quick changes. {ai ? 'The notes of the score are sent to the AI service set in Settings.' : 'Needs an AI key – add one in Settings.'}
       </p>
+      {ai && (
+        <div className="field">
+          <label htmlFor="chmodel">Model for chords</label>
+          <input id="chmodel" autoCapitalize="off" autoCorrect="off" spellCheck={false} placeholder={`${ai.model} (used if left empty)`} value={chordsModel} onChange={(e) => setChordsModel(e.target.value)} disabled={busy} />
+        </div>
+      )}
       {error && <p className="hint" role="alert" style={{ color: 'var(--danger)' }}>{error}</p>}
       <div className="row-end">
         {busy && <button className="btn" onClick={() => abort.current?.abort()}>Stop</button>}

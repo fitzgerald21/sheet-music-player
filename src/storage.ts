@@ -82,6 +82,8 @@ export interface Settings {
   compatBaseUrl: string;
   compatKey: string;
   compatModel: string;
+  /** Model for the "Write chords with AI" button; empty = the model above. */
+  chordsModel: string;
   apiKey: string;
   model: string;
   effort: Effort;
@@ -102,6 +104,7 @@ export const DEFAULT_SETTINGS: Settings = {
   compatBaseUrl: 'https://openrouter.ai/api/v1',
   compatKey: '',
   compatModel: '',
+  chordsModel: '',
   apiKey: '',
   model: 'claude-opus-5-5',
   effort: 'high',

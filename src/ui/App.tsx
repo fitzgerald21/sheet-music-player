@@ -831,6 +831,8 @@ export function App() {
         <ChordsPanel
           score={score}
           ai={aiConfig}
+          chordsModel={settings.chordsModel}
+          setChordsModel={(m) => setSettings({ ...settings, chordsModel: m })}
           playChords={settings.playChords}
           setPlayChords={(b) => setSettings({ ...settings, playChords: b })}
           onApply={(s, msg) => { commit(s); flash(msg); }}
