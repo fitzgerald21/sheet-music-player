@@ -105,6 +105,9 @@ describe('telling the assistant what the user means', () => {
     expect(req).toContain('The user highlighted: the note G4 inside the chord at m2');
     expect(req.trim().endsWith('Request: remove the tie')).toBe(true);
     expect(buildRequest(s, 'chords please', [], 'chords')).not.toContain('detector');
+    s.measures[0].chords = [{ beat: 1, text: 'Cmaj7' }];
+    expect(buildRequest(s, 'x', [], 'edit')).toContain('chords: Cmaj7@1');
+    expect(buildRequest(s, 'chords please', [], 'chords')).not.toContain('Cmaj7');
   });
 
   it('finds measure numbers in the request and sends only nearby measures of a long score', () => {

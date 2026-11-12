@@ -111,7 +111,7 @@ function staffNames(score: Score): string[] {
   return globalStaves(score).map((s, i) => `S${i + 1} ${s.clef}`);
 }
 
-function measureBlock(score: Score, mi: number, names: string[]): string {
+function measureBlock(score: Score, mi: number, names: string[], withChords = true): string {
   const m = score.measures[mi];
   const head = [`m${mi + 1}`];
   if (m.pickup) head.push('(pickup)');
@@ -122,7 +122,7 @@ function measureBlock(score: Score, mi: number, names: string[]): string {
   if (m.repeatEnd) head.push('repeat-end');
   if (m.ending?.length) head.push(`ending ${m.ending.join(',')}`);
   const lines = [head.join(' ')];
-  if (m.chords?.length) lines.push(`  chords: ${m.chords.map((c) => `${c.text}@${+c.beat.toFixed(3)}`).join(' ')}`);
+  if (withChords && m.chords?.length) lines.push(`  chords: ${m.chords.map((c) => `${c.text}@${+c.beat.toFixed(3)}`).join(' ')}`);
   m.staves.forEach((st, si) => lines.push(`  ${names[si] ?? `S${si + 1}`}: ${st.voices.map(voiceToString).join(' | ')}`));
   return lines.join('\n');
 }
@@ -195,7 +195,7 @@ export function describeMark(score: Score, mark: Mark, names = staffNames(score)
 
 const pretty = (s: string) => s.replace(/#/g, '♯').replace(/([A-G])b/g, '$1♭');
 
-export function describeScore(score: Score, measures: number[]): string {
+export function describeScore(score: Score, measures: number[], withChords = true): string {
   const names = staffNames(score);
   const lines = [
     `Title: ${score.title || '(none)'}${score.composer ? ` · Composer: ${score.composer}` : ''}`,
@@ -204,13 +204,14 @@ export function describeScore(score: Score, measures: number[]): string {
   ];
   if (measures.length < score.measures.length) lines.push(`Only part of the score is listed (${measures.length} of ${score.measures.length} measures).`);
   lines.push('');
-  for (const mi of measures) lines.push(measureBlock(score, mi, names));
+  for (const mi of measures) lines.push(measureBlock(score, mi, names, withChords));
   return lines.join('\n');
 }
 
 export function buildRequest(score: Score, text: string, marks: Mark[], mode: AssistantMode): string {
   const names = staffNames(score);
-  const parts = [describeScore(score, measuresToSend(score, text, marks)), ''];
+  // when writing chords from scratch the model must not see the ones already there, or it repeats them
+  const parts = [describeScore(score, measuresToSend(score, text, marks), mode !== 'chords'), ''];
   const said = marks.map((mk) => describeMark(score, mk, names)?.forModel).filter(Boolean);
   if (said.length) parts.push(`The user highlighted: ${said.join('; ')}.`, '');
   parts.push(`Request: ${text.trim()}`);
