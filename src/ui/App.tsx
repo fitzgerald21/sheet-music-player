@@ -607,7 +607,7 @@ export function App() {
     try {
       flash('Opening…');
       const r = await importAnyFile(f);
-      if (r.kind === 'images') {
+      if (r.kind === 'scan') {
         setScanFiles(r.files);
         setView('scan');
         return;

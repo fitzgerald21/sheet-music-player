@@ -5,11 +5,14 @@ import { extrasConfig, scanPages } from '../omr/client';
 import { TranscribeProgress } from '../omr/transcribe';
 import { Score } from '../model/types';
 import { Settings } from '../storage';
+import { isPdf } from '../importers/pdf';
 
 interface PageItem {
   key: string;
   file: File;
   rotate: number;
+  /** where a page rendered from a PDF came from, e.g. "Sonata.pdf, p. 3" */
+  source?: string;
   prepared?: PreparedImage;
   error?: string;
 }
@@ -22,6 +25,9 @@ interface Props {
   onNeedKey: () => void;
   initialFiles?: File[];
 }
+
+const isImage = (f: File) => f.type.startsWith('image/') || /\.(heic|heif|jpe?g|png|webp)$/i.test(f.name);
+const newKey = () => Math.random().toString(36).slice(2);
 
 const PHASE_LABEL: Record<TranscribeProgress['phase'], string> = {
   sending: 'Uploading…',
@@ -36,6 +42,12 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey, in
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<Record<string, TranscribeProgress>>({});
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  /** a PDF whose pages are being drawn */
+  const [opening, setOpening] = useState<{ name: string; done: number; count: number } | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const openAbort = useRef(new AbortController());
+  useEffect(() => () => openAbort.current.abort(), []);
   const [localMB, setLocalMB] = useState(0);
   useEffect(() => {
     void import('../omr/local').then((m) => m.localDownloadMB()).then(setLocalMB);
@@ -62,13 +74,10 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey, in
   const abortRef = useRef<AbortController | null>(null);
   const cameraRef = useRef<HTMLInputElement>(null);
   const pickRef = useRef<HTMLInputElement>(null);
+  const pdfRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
-    if (initialFiles?.length) {
-      const dt = new DataTransfer();
-      initialFiles.forEach((f) => dt.items.add(f));
-      void addFiles(dt.files);
-    }
+    if (initialFiles?.length) void addFiles(initialFiles);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -78,18 +87,62 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey, in
     return () => clearInterval(t);
   }, [busy]);
 
-  async function addFiles(files: FileList | null) {
-    if (!files?.length) return;
-    const items: PageItem[] = [...files].filter((f) => f.type.startsWith('image/') || /\.(heic|jpe?g|png|webp)$/i.test(f.name)).map((file) => ({ key: Math.random().toString(36).slice(2), file, rotate: 0 }));
-    setPages((p) => [...p, ...items]);
-    for (const it of items) {
-      try {
-        const prepared = await prepareImage(it.file, 0);
-        setPages((p) => p.map((x) => (x.key === it.key ? { ...x, prepared } : x)));
-      } catch {
-        setPages((p) => p.map((x) => (x.key === it.key ? { ...x, error: 'Could not open this image' } : x)));
+  async function prepare(it: PageItem) {
+    try {
+      const prepared = await prepareImage(it.file, 0);
+      setPages((p) => p.map((x) => (x.key === it.key ? { ...x, prepared } : x)));
+    } catch {
+      setPages((p) => p.map((x) => (x.key === it.key ? { ...x, error: 'Could not open this image' } : x)));
+    }
+  }
+
+  /** Each page of the PDF becomes a page to scan, added as soon as it is drawn. */
+  async function addPdf(file: File) {
+    const name = file.name || 'PDF';
+    setOpening({ name, done: 0, count: 0 });
+    const prepping: Promise<void>[] = [];
+    try {
+      const { renderPdfPages } = await import('../importers/pdf');
+      const info = await renderPdfPages(
+        file,
+        (page, i, info) => {
+          const it: PageItem = { key: newKey(), file: page, rotate: 0, source: info.total > 1 ? `${name}, p. ${i + 1}` : name };
+          setPages((p) => [...p, it]);
+          setOpening({ name, done: i + 1, count: info.count });
+          prepping.push(prepare(it));
+        },
+        { signal: openAbort.current.signal, onInfo: (info) => setOpening({ name, done: 0, count: info.count }) },
+      );
+      await Promise.all(prepping);
+      if (!info.total) setError(`“${name}” has no pages.`);
+      else if (info.total > info.count)
+        setNotice(`“${name}” has ${info.total} pages; the first ${info.count} were added. To scan the rest, remove these pages when they are done and open the PDF again, or split it into smaller PDFs.`);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg !== 'Cancelled') setError(`${name}: ${msg}`);
+    } finally {
+      setOpening(null);
+    }
+  }
+
+  /** Photos and PDFs, kept in the order given. */
+  async function addFiles(list: FileList | File[] | null) {
+    const files = [...(list ?? [])];
+    if (!files.length) return;
+    setError(null);
+    setNotice(null);
+    const skipped = files.filter((f) => !isPdf(f) && !isImage(f));
+    if (skipped.length) setError(`Only photos and PDFs can be scanned (skipped ${skipped.map((f) => f.name).join(', ')}). Open MusicXML, MIDI and ABC files with Import in the library.`);
+    const images: PageItem[] = [];
+    for (const f of files) {
+      if (isPdf(f)) await addPdf(f);
+      else if (isImage(f)) {
+        const it: PageItem = { key: newKey(), file: f, rotate: 0 };
+        images.push(it);
+        setPages((p) => [...p, it]);
       }
     }
+    for (const it of images) await prepare(it);
   }
 
   async function rotate(key: string) {
@@ -160,7 +213,21 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey, in
   const readyCount = pages.filter((p) => p.prepared).length;
 
   return (
-    <div className="scan-view">
+    <div
+      className={`scan-view${dragging ? ' dragging' : ''}`}
+      onDragOver={(e) => {
+        if (busy || !e.dataTransfer.types.includes('Files')) return;
+        e.preventDefault();
+        setDragging(true);
+      }}
+      onDragLeave={(e) => e.currentTarget === e.target && setDragging(false)}
+      onDrop={(e) => {
+        if (busy) return;
+        e.preventDefault();
+        setDragging(false);
+        void addFiles(e.dataTransfer.files);
+      }}
+    >
       <header className="topbar">
         <button className="icon-btn" onClick={() => (busy ? abortRef.current?.abort() : onCancel())} aria-label="Back">
           <Icon.back />
@@ -176,7 +243,7 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey, in
               <Icon.camera size={42} />
             </div>
             <h2>Photograph your music</h2>
-            <p>Take one photo per page, in good light and as flat and square-on as you can. Add several pages to scan them as one piece.</p>
+            <p>Take one photo per page, in good light and as flat and square-on as you can, or open a PDF of the score (every page is added). Add several pages to scan them as one piece.</p>
           </div>
         )}
 
@@ -192,11 +259,12 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey, in
                   </div>
                   <div className="page-meta">
                     <div className="page-name">{combine ? `Page ${i + 1}` : `Piece ${i + 1}`}</div>
+                    {p.source && !busy && <div className="page-source">{p.source}</div>}
                     {busy && (
                       <div className="page-progress">
                         <div className={`spinner ${pr?.phase === 'done' ? 'done' : ''}`} />
                         <span>
-                          {pr ? pr.label ?? PHASE_LABEL[pr.phase] : settings.engine !== 'local' && combine && i > 0 ? 'Waiting for page 1…' : 'Starting…'}
+                          {pr ? pr.label ?? PHASE_LABEL[pr.phase] : settings.engine !== 'local' && combine && i > 0 ? (progress[pages[0].key]?.phase === 'done' ? 'Waiting…' : 'Waiting for page 1…') : 'Starting…'}
                           {pr && !pr.label && pr.measures > 0 && pr.phase !== 'done' ? ` ${pr.measures} measures` : ''}
                           {pr?.phase === 'done' ? ` · ${pr.measures} measures` : ''}
                         </span>
@@ -225,9 +293,23 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey, in
             <button className="btn big" onClick={() => pickRef.current?.click()}>
               <Icon.image /> Choose from photos
             </button>
+            <button className="btn big" onClick={() => pdfRef.current?.click()} disabled={!!opening}>
+              <Icon.file /> Open a PDF
+            </button>
             <input ref={cameraRef} type="file" accept="image/*" capture="environment" hidden onChange={(e) => { void addFiles(e.target.files); e.target.value = ''; }} />
             <input ref={pickRef} type="file" accept="image/*" multiple hidden onChange={(e) => { void addFiles(e.target.files); e.target.value = ''; }} />
+            <input ref={pdfRef} type="file" accept="application/pdf,.pdf" multiple hidden onChange={(e) => { void addFiles(e.target.files); e.target.value = ''; }} />
           </div>
+        )}
+        {opening && (
+          <div className="page-progress opening">
+            <div className="spinner" />
+            <span>Opening {opening.name}{opening.count ? ` – page ${Math.min(opening.done + 1, opening.count)} of ${opening.count}` : ''}…</span>
+          </div>
+        )}
+        {notice && <div className="alert">{notice}</div>}
+        {pages.length > 3 && !busy && !opening && (
+          <p className="hint"><button className="link" onClick={() => setPages([])}>Remove all {pages.length} pages</button></p>
         )}
 
         {pages.length > 1 && !busy && (
@@ -289,7 +371,7 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey, in
         {busy ? (
           <button className="btn big" onClick={() => abortRef.current?.abort()}>Cancel</button>
         ) : (
-          <button className="btn primary big wide" disabled={!readyCount} onClick={run}>
+          <button className="btn primary big wide" disabled={!readyCount || !!opening} onClick={run}>
             <Icon.music /> {readyCount > 1 ? (combine ? `Scan ${readyCount} pages` : `Scan ${readyCount} pieces`) : 'Scan music'}
           </button>
         )}

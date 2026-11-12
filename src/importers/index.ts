@@ -4,7 +4,8 @@ import { parseMusicXML, musicXmlText } from './musicxml';
 import { midiToScore } from './midi';
 import { parseAbc } from './abc';
 
-export type ImportResult = { kind: 'score'; scores: Score[] } | { kind: 'images'; files: File[] };
+/** 'scan': photos or PDFs that go to the scanner (ScanView turns each PDF page into a page to read). */
+export type ImportResult = { kind: 'score'; scores: Score[] } | { kind: 'scan'; files: File[] };
 
 const ext = (name: string) => (/\.([a-z0-9]+)$/i.exec(name)?.[1] ?? '').toLowerCase();
 
@@ -21,10 +22,10 @@ export const IMPORT_ACCEPT: string | undefined = TOUCH_DEVICE
 export async function importFile(file: File): Promise<ImportResult> {
   const e = ext(file.name);
   const bytes = new Uint8Array(await file.arrayBuffer());
-  if (file.type.startsWith('image/') || ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'].includes(e)) return { kind: 'images', files: [file] };
-  if (e === 'pdf' || file.type === 'application/pdf') {
-    const { pdfToImages } = await import('./pdf');
-    return { kind: 'images', files: await pdfToImages(file) };
+  if (file.type.startsWith('image/') || ['jpg', 'jpeg', 'png', 'webp', 'heic', 'heif'].includes(e)) return { kind: 'scan', files: [file] };
+  // %PDF at the start: a PDF even when a phone has dropped its name or type
+  if (e === 'pdf' || file.type === 'application/pdf' || (bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46)) {
+    return { kind: 'scan', files: [e === 'pdf' ? file : new File([bytes], `${file.name || 'score'}.pdf`, { type: 'application/pdf' })] };
   }
   if (e === 'mid' || e === 'midi' || (bytes[0] === 0x4d && bytes[1] === 0x54 && bytes[2] === 0x68 && bytes[3] === 0x64)) {
     return { kind: 'score', scores: [midiToScore(bytes, file.name)] };

@@ -2,7 +2,7 @@
 
 Take a photo of sheet music (one page or several), and get a real, editable score you can play back.
 
-- **Scan**: photograph pages with your phone (or pick photos). Claude reads every note, rest, tie, chord symbol, lyric, repeat and D.C./coda mark, and multi-page pieces are stitched together (pages with printed numbers are sorted automatically).
+- **Scan**: photograph pages with your phone, pick photos, or open (or drag in) a PDF of the score; every page of a multi-page PDF is added, up to 60. Claude reads every note, rest, tie, chord symbol, lyric, repeat and D.C./coda mark, and multi-page pieces are stitched together (pages with printed numbers are sorted automatically).
 - **See it**: the music is engraved properly (OpenSheetMusicDisplay), with lyrics, chord symbols, dynamics and articulations.
 - **Hear it**: a sampled grand piano (Salamander) with reverb, dynamics, accents, staccato, slurs and a light human feel. Other parts can use voice, flute, strings, organ, music box, marimba, guitar or bass sounds. Repeats, 1st/2nd endings, D.C./D.S. al Fine/Coda are followed. Notes light up as they play and the page follows along.
 - **Practice**: tempo slider (25–200%), metronome, one-bar count-in, loop any range of measures, tap a measure to start there, mute/solo/volume per part.
@@ -14,7 +14,7 @@ Take a photo of sheet music (one page or several), and get a real, editable scor
   - It shows the name of the chord you're holding on a MIDI keyboard.
 - **Chords**: printed chord symbols are read when scanning. For music without them, **Detect chords** works them out from the notes (slash chords included). They transpose with the music and can play softly along.
 - **Print**: a print view with real Letter/A4 pages, adjustable staff size, and a choice of parts, chord symbols, lyrics, title and measure numbers. It prints what's on screen, so it uses your transposed key and your fixes. Use "Save as PDF" in the print dialog to get a file.
-- **Import**: MusicXML (`.musicxml`, `.mxl`, `.xml`), MIDI, ABC, PDF (pages go to the scanner) and images.
+- **Import**: MusicXML (`.musicxml`, `.mxl`, `.xml`), MIDI, ABC, PDF (every page goes to the scanner) and images.
 - **Find music**: search **The Session** (thousands of folk tunes with chords) and import with one tap. Search **IMSLP** (public-domain classical scores) and get its PDF/MIDI/MusicXML files, with links to more sources.
 - **Export** MusicXML (opens in MuseScore, Finale, Sibelius, Dorico…), MIDI, the app's own `.json`, or print to PDF. Scores are saved automatically in your browser.
 

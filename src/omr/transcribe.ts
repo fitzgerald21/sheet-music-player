@@ -117,9 +117,26 @@ export interface PagesProgress {
 
 export type PageFn = (image: PageImage, ctx: PageContext, onProgress: (p: TranscribeProgress) => void) => Promise<PageTranscription>;
 
+/** Pages read at the same time after the first; a long PDF would otherwise send dozens of requests at once. */
+export const PAGE_CONCURRENCY = 4;
+
+/** Like Promise.all over items.map(fn), with at most `limit` running at a time. Results keep their order. */
+export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T, index: number) => Promise<R>): Promise<R[]> {
+  const out = new Array<R>(items.length);
+  let next = 0;
+  const run = async () => {
+    while (next < items.length) {
+      const i = next++;
+      out[i] = await fn(items[i], i);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, run));
+  return out;
+}
+
 /**
  * Transcribe several pages with any page reader. The first page is done first so later pages can
- * reuse its part layout; the rest run in parallel.
+ * reuse its part layout; the rest run in parallel, a few at a time.
  */
 export async function transcribePagesWith(
   pageFn: PageFn,
@@ -130,8 +147,7 @@ export async function transcribePagesWith(
   const results = [first];
   if (images.length > 1) {
     const lastMeasure = first.measures[first.measures.length - 1];
-    const rest = await Promise.all(
-      images.slice(1).map((img, k) =>
+    const rest = await mapLimit(images.slice(1), PAGE_CONCURRENCY, (img, k) =>
         pageFn(
           img,
           {
@@ -144,7 +160,6 @@ export async function transcribePagesWith(
           },
           (p) => onProgress?.({ page: k + 1, progress: p }),
         ),
-      ),
     );
     results.push(...rest);
   }

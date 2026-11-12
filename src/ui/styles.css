@@ -267,7 +267,7 @@ kbd { font: 12px ui-monospace, Menlo, monospace; background: var(--surface-2); b
 .seg button { flex: 1; border: 0; background: transparent; padding: 10px 6px; border-radius: 9px; font-weight: 600; font-size: 14px; color: var(--ink-2); }
 .seg button.on { background: var(--surface); color: var(--ink); box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1); }
 
-.alert { padding: 10px 14px; border-radius: 10px; margin: 12px 0; font-size: 14px; }
+.alert { padding: 10px 14px; border-radius: 10px; margin: 12px 0; font-size: 14px; background: var(--surface-2); color: var(--ink-2); }
 .alert.error { background: color-mix(in srgb, var(--danger) 12%, var(--surface)); color: var(--danger); }
 .toast {
   position: fixed; left: 50%; bottom: calc(96px + env(safe-area-inset-bottom)); transform: translateX(-50%);
@@ -313,6 +313,9 @@ kbd { font: 12px ui-monospace, Menlo, monospace; background: var(--surface-2); b
 .page-num { position: absolute; left: 4px; top: 4px; background: var(--ink); color: var(--bg); font-size: 11px; font-weight: 700; border-radius: 6px; padding: 0 5px; }
 .page-meta { flex: 1; min-width: 0; }
 .page-name { font-weight: 650; }
+.page-source { font-size: 12px; color: var(--ink-3); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.page-progress.opening { justify-content: center; margin: 4px 0 10px; }
+.scan-view.dragging .scan-body { outline: 2px dashed var(--accent); outline-offset: -8px; border-radius: 16px; }
 .page-progress { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--ink-2); margin-top: 4px; }
 .page-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; max-width: 140px; }
 .scan-footer { position: sticky; bottom: 0; padding: 12px 16px; padding-bottom: max(12px, env(safe-area-inset-bottom)); background: linear-gradient(transparent, var(--bg) 30%); display: flex; justify-content: center; }
