@@ -8,6 +8,7 @@ import { PageTranscription } from './schema';
 import { CompatConfig, transcribePageCompat } from './openaiCompat';
 import { DEFAULT_EXTRAS_MODEL, applyExtras, readExtras } from './annotate';
 import { cleanScanXml } from './local/clean';
+import { detailPieces } from './image';
 import { parseMusicXML, musicXmlText } from '../importers/musicxml';
 import { ConvertResult, applyOctaveLines, convertPages } from './convert';
 import { Settings } from '../storage';
@@ -159,7 +160,8 @@ export async function scanPages(images: PageImage[], settings: Settings, onProgr
         if (extras) {
           say(i, `Reading the ${wanted}…`, 'writing');
           try {
-            const summary = applyExtras(s, await readExtras(extras, images[i], s, signal, want), want);
+            const pieces = want.marks ? await detailPieces(images[i]) : [];
+            const summary = applyExtras(s, await readExtras(extras, images[i], s, signal, want, pieces), want);
             added.chords += summary.chords;
             added.lyrics += summary.lyrics;
             added.marks += summary.marks ?? 0;

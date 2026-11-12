@@ -57,3 +57,36 @@ export async function prepareImage(file: Blob, rotate = 0): Promise<PreparedImag
     height: canvas.height,
   };
 }
+
+/**
+ * Six enlarged, overlapping pieces of a page: the left and right half of its top, middle and bottom
+ * third. A model that shrinks a whole page loses small marks such as tremolo slashes; the pieces
+ * keep them readable. Returns [] for a small image, or where the browser cannot cut it.
+ */
+export async function detailPieces(image: PageImage): Promise<PageImage[]> {
+  try {
+    const blob = await (await fetch(`data:${image.mediaType};base64,${image.data}`)).blob();
+    const bmp = await loadBitmap(blob);
+    const w = 'naturalWidth' in bmp ? bmp.naturalWidth : bmp.width;
+    const h = 'naturalHeight' in bmp ? bmp.naturalHeight : bmp.height;
+    if (Math.max(w, h) < 1400) return [];
+    const pieces: PageImage[] = [];
+    for (let row = 0; row < 3; row++) {
+      for (let col = 0; col < 2; col++) {
+        const x = col === 0 ? 0 : Math.round(w * 0.45);
+        const y = Math.max(0, Math.round(h * (row / 3 - 0.04)));
+        const pw = Math.round(w * 0.55);
+        const ph = Math.min(h, Math.round(h * ((row + 1) / 3 + 0.04))) - y;
+        const canvas = document.createElement('canvas');
+        canvas.width = pw;
+        canvas.height = ph;
+        canvas.getContext('2d')!.drawImage(bmp as CanvasImageSource, x, y, pw, ph, 0, 0, pw, ph);
+        const url = canvas.toDataURL('image/jpeg', 0.88);
+        pieces.push({ data: url.slice(url.indexOf(',') + 1), mediaType: 'image/jpeg' });
+      }
+    }
+    return pieces;
+  } catch {
+    return [];
+  }
+}

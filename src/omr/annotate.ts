@@ -58,9 +58,9 @@ export function lyricSlots(score: Score): NoteEvent[][] {
   });
 }
 
-const system = (want: ExtrasWanted) => `You help digitise printed sheet music. The notes of the page in the photo have already been read by a machine. You add what the machine cannot read: the title and credits, the tempo, the chord symbols above the staff and the lyrics under the top staff${want.marks ? ', and the hairpins, octave lines and tremolo slashes' : ''}.
+const system = (want: ExtrasWanted, pieces = 0) => `You help digitise printed sheet music. The notes of the page in the photo have already been read by a machine. You add what the machine cannot read: the title and credits, the tempo, the chord symbols above the staff and the lyrics under the top staff${want.marks ? ', and the hairpins, octave lines and tremolo slashes' : ''}.
 
-You are given the top staff of every measure the machine found, in reading order (system by system, left to right). Notes are written pitch/duration: w whole, h half, q quarter, 8 eighth, 16 sixteenth, a "." for each dot, "t" for a triplet, r for a rest, R for a whole-measure rest, "~" for a note tied to the next, "+" between the notes of a chord. Use the melody to find each measure in the photo. The machine sometimes misreads a note, so match measures by their overall shape and their position on the page, not note by note.${want.marks ? MARKS_LISTING : ''}
+You are given the top staff of every measure the machine found, in reading order (system by system, left to right). Notes are written pitch/duration: w whole, h half, q quarter, 8 eighth, 16 sixteenth, a "." for each dot, "t" for a triplet, r for a rest, R for a whole-measure rest, "~" for a note tied to the next, "+" between the notes of a chord. Use the melody to find each measure in the photo. The machine sometimes misreads a note, so match measures by their overall shape and their position on the page, not note by note.${want.marks ? MARKS_LISTING : ''}${pieces ? `\n\nAfter the photo of the whole page you get ${pieces} enlarged pieces of the same photo: the left and right half of its top, middle and bottom third, in that order, overlapping a little. Use the whole page to find your way, and the pieces to look closely at small things – slashes on stems, which end of a hairpin is the point, where a dashed line ends.` : ''}
 
 Reply with one JSON object and nothing else:
 {"title":"","subtitle":"","composer":"","lyricist":"","tempo":0,"measures":[{"m":1,"text":"","chords":[{"beat":1,"symbol":"Bb"}],"lyrics":["Sing","a","song"]}]${want.marks ? ',"lines":[{"type":"cresc","staff":1,"m1":3,"n1":1,"m2":4,"n2":2}],"tremolos":[{"m":2,"staff":1,"note":4,"slashes":3}]' : ''}}
@@ -77,11 +77,11 @@ ${[!want.info && '- Do not read the title, subtitle, composer, lyricist, tempo o
 const MARKS_LISTING = ` Every staff of a measure is listed, top staff first, and every note or chord has a number in front ("3:" is the third note or chord of that staff in that measure; rests have no number; " | " separates two voices on one staff, and the numbers run on through the second voice). The pitches are listed as printed on the staff.`;
 
 const MARKS_RULES = `- lines: every hairpin and every octave line on the page, one entry for each, however many measures or systems it runs over.
-  "type": "cresc" for a hairpin that opens (<), "dim" for one that closes (>), "8va" for a dashed line above a staff that starts with "8va" or "8", "8vb" for one below a staff, "15ma" / "15mb" for two octaves.
+  "type": look at each hairpin to see which end is the point. Its two lines meet in a point on the LEFT and are apart on the right: "cresc". They are apart on the LEFT and meet in a point on the right: "dim". Do not guess the type from the dynamics around it. "8va" for a dashed line above a staff that starts with "8va" or "8", "8vb" for one below a staff, "15ma" / "15mb" for two octaves.
   "staff": 1 for the top staff of the system, 2 for the next one down. A hairpin drawn between the two staves of a piano part belongs to staff 1. An octave line belongs to the staff it is drawn over (8va) or under (8vb).
   "m1", "n1": the measure and the note number where it starts; "m2", "n2": the measure and note number where it ends. A hairpin starts at the note at its left tip and ends at the last note before its right end. An octave line starts at the note under the "8" and ends at the last note before the small hook that closes the dashed line. Look along the whole dashed line: it often carries on at the start of the next system, and ends several measures later.
   If an octave line is already running at the top of the page (a dashed line with no "8va" at its start, continuing from the page before), start it at note 1 of the page's first measure. If it runs off the bottom of the page, end it at the last note of the last measure.
-- tremolos: every note or chord with tremolo slashes – two or three short thick slanted strokes across its stem (or above or below a whole note): {"m":2,"staff":1,"note":4,"slashes":3}. They usually sit on longer notes (half notes, dotted quarters). Beams joining several eighth or sixteenth notes are not tremolos.
+- tremolos: every note or chord with tremolo slashes – two or three short thick slanted strokes across its stem (or above or below a whole note): {"m":2,"staff":1,"note":4,"slashes":3}. Check the stem of each long note (half notes, dotted quarters, whole notes): list it only when you can see the strokes crossing that stem. Most half notes have a bare stem and are not tremolos, and a measure that looks like one with a tremolo may have none. Beams joining several eighth or sixteenth notes are not tremolos.
 - [] for "lines" and "tremolos" if the page has none.
 `;
 
@@ -142,18 +142,18 @@ function normalise(raw: unknown): PageExtras {
 }
 
 /** Asks the model for the title, tempo, chords and lyrics of one page. */
-export async function readExtras(cfg: CompatConfig, image: PageImage, score: Score, signal?: AbortSignal, want: ExtrasWanted = ALL_EXTRAS): Promise<PageExtras> {
+export async function readExtras(cfg: CompatConfig, image: PageImage, score: Score, signal?: AbortSignal, want: ExtrasWanted = ALL_EXTRAS, pieces: PageImage[] = []): Promise<PageExtras> {
   if (!cfg.baseUrl || !cfg.model) throw new TranscriptionError('Set the AI model in Settings.', 'auth');
   const body = (format: unknown) => ({
     model: cfg.model,
     max_tokens: 16000,
     temperature: 0,
     messages: [
-      { role: 'system', content: system(want) },
+      { role: 'system', content: system(want, pieces.length) },
       {
         role: 'user',
         content: [
-          { type: 'image_url', image_url: { url: `data:${image.mediaType};base64,${image.data}` } },
+          ...[image, ...pieces].map((im) => ({ type: 'image_url', image_url: { url: `data:${im.mediaType};base64,${im.data}` } })),
           { type: 'text', text: describe(score, want) },
         ],
       },

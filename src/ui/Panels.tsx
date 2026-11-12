@@ -326,7 +326,7 @@ export function SettingsPanel({ settings, onChange, onClose, serverKey, audiveri
             <label className="check"><input type="checkbox" checked={settings.extrasLyrics} onChange={(e) => onChange({ ...settings, extrasLyrics: e.target.checked })} /> Lyrics</label>
             <label className="check"><input type="checkbox" checked={settings.extrasMarks} onChange={(e) => onChange({ ...settings, extrasMarks: e.target.checked })} /> Crescendo and diminuendo hairpins, 8va lines and tremolos</label>
           </div>
-          <p className="hint">For this the photo is sent to the service below, with your key. It costs roughly 5–15 cents a page with the default model. Without a key, only the notes are read.</p>
+          <p className="hint">For this the photo is sent to the service below, with your key. It costs roughly 5–15 cents a page with the default model, and a few cents more with hairpins, 8va lines and tremolos ticked (the page is then also sent in six enlarged pieces). Without a key, only the notes are read.</p>
         </>
       )}
       {settings.engine === 'claude' && (
