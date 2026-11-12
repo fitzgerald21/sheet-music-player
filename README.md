@@ -51,12 +51,19 @@ Settings → *Read photos with*:
 
 | Engine | Cost | Good at | Weak at |
 | --- | --- | --- | --- |
-| **This device** (default; [homr](https://github.com/liebharc/homr) in the browser) | Free, no key, nothing uploaded | Notes and rhythms from phone photos; works on GitHub Pages | No title, lyrics or chord symbols; 1–3 minutes a page; a one-time download of about 200 MB; needs a phone or computer with enough free memory |
+| **This device** (default; [homr](https://github.com/liebharc/homr) in the browser) | Free, no key, nothing uploaded | Notes and rhythms from phone photos; works on GitHub Pages | No title, lyrics or chord symbols; about a minute a page on a recent computer, longer on a phone; a one-time download of about 200 MB; needs a phone or computer with enough free memory |
 | **Claude** | API usage | Phone photos, lyrics, chord symbols, piano-vocal layouts, D.C./coda marks | Can occasionally mis-hear a rhythm or ledger line (the app repairs rhythms and lists what it was unsure of) |
 | **OpenRouter / DeepInfra / any OpenAI-compatible API** | That service's prices | Lets you use other vision models or credits you already have | Most open models are much less accurate at reading music |
 | **Audiveris** (open-source, algorithmic) | Free | Clean, flat scans and PDFs (e.g. from IMSLP) | Phone photos with perspective, curl or shadows; lyrics and chord symbols |
 
-**Scanning on the device with homr.** `npm run fetch-homr` downloads homr's three ONNX models, its Python package and the ONNX Runtime WebAssembly files into `public/homr/` (about 160 MB, not committed; the Pages workflow runs it before building). In the browser, homr's Python image processing runs in [Pyodide](https://pyodide.org) (loaded from jsDelivr) and its networks in [ONNX Runtime Web](https://onnxruntime.ai); see `src/omr/local`. Without those files the option reports that it is not included. homr is licensed AGPL-3.0, so a copy of this app that ships it must offer its source under AGPL-compatible terms.
+**Scanning on the device with homr.** `npm run fetch-homr` downloads homr's three ONNX models, its Python package and the ONNX Runtime WebAssembly files into `public/homr/` (about 160 MB, not committed; the Pages workflow runs it before building). In the browser, homr's Python image processing runs in [Pyodide](https://pyodide.org) (loaded from jsDelivr) and its networks in [ONNX Runtime Web](https://onnxruntime.ai); see `src/omr/local`. Without those files the option reports that it is not included.
+
+*Speed.* A page takes about 55 seconds on a 4-core computer (it took about 2 minutes before these changes):
+- `public/coi-sw.js` makes the page cross-origin isolated even on GitHub Pages, which can't send the headers itself. Isolation lets the networks use up to four CPU threads. On the first visit the page reloads once to turn it on. `npm run dev` with `COI=1` sends the headers directly.
+- Each line of music is decoded separately, so two decoders read lines side by side. iPhones, iPads and devices with under 4 GB of memory keep one, because each decoder needs about 250 MB more.
+- While Python looks for the staffs on one page, the network is already looking at the next.
+- homr's slowest pure-Python steps (comparing every pair of boxes on the page) are replaced in `homr_driver.py` by numpy versions that give the same answers.
+- The AI step starts on each page as soon as that page is read. homr is licensed AGPL-3.0, so a copy of this app that ships it must offer its source under AGPL-compatible terms.
 
 **Title, chords, lyrics and expression marks for on-device scans.** homr reads only notes and rhythms. With *Add the title, tempo, chord symbols and lyrics with an AI model* ticked in Settings and an OpenRouter (or DeepInfra, or other OpenAI-compatible) key entered, each photo is also sent to that model together with the melody homr found, and the model's answer is written into the score (`src/omr/annotate.ts`). The same step finds crescendo and diminuendo hairpins, 8va/8vb lines and tremolo slashes; for those the page is also sent in six enlarged pieces, so small marks stay readable. On OpenRouter the model defaults to `anthropic/claude-opus-5.5`. Without a key this step is skipped.
 

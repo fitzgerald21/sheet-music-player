@@ -67,6 +67,11 @@ export class RpcClient {
     this.pending.clear();
   }
 
+  /** The worker stopped or failed for good. */
+  get crashed(): boolean {
+    return this.dead !== null;
+  }
+
   call<T>(method: string, ...args: unknown[]): Promise<T> {
     if (this.dead) return Promise.reject(this.dead);
     return new Promise<T>((resolve, reject) => {

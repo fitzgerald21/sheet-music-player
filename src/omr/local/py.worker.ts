@@ -17,7 +17,7 @@ export interface DecoderConstants {
 }
 
 interface PyBuffer {
-  data: Float32Array;
+  data: Float32Array | Uint8Array;
   release(): void;
 }
 interface PyArray {
@@ -45,8 +45,8 @@ interface Pyodide {
 let py: Pyodide;
 const jobs = new Map<number, PyJob>();
 
-function take(proxy: PyArray): Float32Array {
-  const buf = proxy.getBuffer('f32');
+function take(proxy: PyArray, type = 'f32'): Float32Array | Uint8Array {
+  const buf = proxy.getBuffer(type);
   try {
     return buf.data.slice();
   } finally {
@@ -94,11 +94,12 @@ serve({
     jobs.set(page, j);
     return tidy(() => j.segnet_patches());
   },
-  patches: (page: number, start: number, count: number): Float32Array => tidy(() => take(job(page).segnet_batch(start, count))),
+  /** The grey patches, uint8 [count, 320, 320]: a quarter of the size of the network's colour input. */
+  patches: (page: number, start: number, count: number): Uint8Array => tidy(() => take(job(page).segnet_batch(start, count), 'u8') as Uint8Array),
   classes: (page: number, start: number, classes: Uint8Array): void => tidy(() => job(page).set_segnet_classes(start, classes)),
   /** Finds the staffs; answers how many staff images there are to read. */
   detect: (page: number): number => tidy(() => job(page).detect()),
-  staff: (page: number, index: number): Float32Array => tidy(() => take(job(page).staff_input(index))),
+  staff: (page: number, index: number): Float32Array => tidy(() => take(job(page).staff_input(index)) as Float32Array),
   staffResult: (page: number, index: number, tokens: Int32Array, attention: Float32Array): void =>
     tidy(() => job(page).set_staff_output(index, tokens, attention)),
   finish: (page: number): string => tidy(() => job(page).finish()),

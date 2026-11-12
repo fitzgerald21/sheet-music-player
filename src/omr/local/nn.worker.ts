@@ -213,17 +213,26 @@ async function releaseAll(): Promise<void> {
 }
 
 serve({
-  configure(ortPath: string): { threads: number } {
+  configure(ortPath: string, maxThreads: number): { threads: number } {
     ort.env.wasm.wasmPaths = ortPath;
-    return { threads: self.crossOriginIsolated ? Math.min(4, navigator.hardwareConcurrency || 1) : 1 };
+    return { threads: self.crossOriginIsolated ? Math.max(1, Math.min(maxThreads, navigator.hardwareConcurrency || 1)) : 1 };
   },
   async loadSegnet(url: string, threads: number): Promise<void> {
     await releaseAll();
     segnet = await load(url, threads);
   },
-  /** patches: float32 [count, 3, 320, 320] → the class of every pixel, uint8 [count, 320, 320] */
-  async segment(patches: Float32Array, count: number): Promise<Uint8Array> {
-    const out = await segnet!.run({ input: new ort.Tensor('float32', patches, [count, 3, WIN, WIN]) });
+  /** grey patches, uint8 [count, 320, 320] → the class of every pixel, uint8 [count, 320, 320] */
+  async segment(grey: Uint8Array, count: number): Promise<Uint8Array> {
+    // the network reads colour: the grey value three times
+    const plane = WIN * WIN;
+    const input = new Float32Array(count * 3 * plane);
+    for (let b = 0; b < count; b++) {
+      for (let c = 0; c < 3; c++) {
+        const to = (b * 3 + c) * plane;
+        for (let i = 0; i < plane; i++) input[to + i] = grey[b * plane + i];
+      }
+    }
+    const out = await segnet!.run({ input: new ort.Tensor('float32', input, [count, 3, WIN, WIN]) });
     return pixelClasses(out.output.data as Float32Array, count);
   },
   async loadEncoder(url: string, threads: number): Promise<void> {

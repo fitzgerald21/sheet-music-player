@@ -27,8 +27,21 @@ interface Manifest {
   models: Record<'segnet' | 'encoder' | 'decoder', { file: string; bytes: number }>;
 }
 
+/**
+ * How many decoders to run side by side, and with how many threads each, out of the threads the device
+ * allows (one without cross-origin isolation). Two decoders with two threads each read a page about as
+ * fast as four with one, for a quarter of the extra memory: each decoder needs roughly 250 MB of its own.
+ * iPhones and iPads close a tab that uses too much memory, so they keep one.
+ */
+export function decoderPlan(threads: number): { count: number; threads: number } {
+  const nav = navigator as Navigator & { deviceMemory?: number };
+  const apple = /iPhone|iPad|iPod/.test(nav.userAgent) || (/Mac/.test(nav.platform) && nav.maxTouchPoints > 1);
+  if (threads < 2 || apple || (nav.deviceMemory !== undefined && nav.deviceMemory < 4)) return { count: 1, threads };
+  return { count: 2, threads: Math.max(1, Math.floor(threads / 2)) };
+}
+
 const CRASH = 'The on-device reader stopped unexpectedly – this device may not have enough free memory for it.';
-/** Patches per run of the segmentation network. Small keeps memory down and costs no speed. */
+/** Patches per run of the segmentation network. Small keeps memory down and costs no speed on the CPU. */
 const BATCH = 1;
 
 /** Folder with the models and runtime that scripts/fetch-homr.mjs downloads. */
@@ -55,7 +68,16 @@ export async function localDownloadMB(): Promise<number> {
   return Math.round((m.models.segnet.bytes + m.models.encoder.bytes + m.models.decoder.bytes) / 1e6) + 45;
 }
 
-export async function scanLocal(images: ArrayBuffer[], onProgress: (p: LocalProgress) => void, signal: AbortSignal): Promise<LocalResult> {
+/**
+ * Reads the pages. `onPage` hears about each page as soon as it is written – usually well before the
+ * last page is done – so that slower follow-up work (the AI step) can start on it.
+ */
+export async function scanLocal(
+  images: ArrayBuffer[],
+  onProgress: (p: LocalProgress) => void,
+  signal: AbortSignal,
+  onPage?: (page: number, xml: string) => void,
+): Promise<LocalResult> {
   const m = await loadManifest();
   if (!m) throw new Error('On-device scanning is not included in this copy of the app.');
   const base = homrBase();
@@ -115,7 +137,8 @@ export async function scanLocal(images: ArrayBuffer[], onProgress: (p: LocalProg
     let threads = 1;
     for (let attempt = 1; ; attempt++) {
       try {
-        ({ threads } = await nn.call<{ threads: number }>('configure', base + 'ort/'));
+        // threads need a large block of shared memory up front; a phone short of memory may manage with one
+        ({ threads } = await nn.call<{ threads: number }>('configure', base + 'ort/', attempt > 1 ? 1 : 4));
         await timed('loadModels', nn.call('loadSegnet', base + m.models.segnet.file, threads));
         break;
       } catch (e) {
@@ -126,35 +149,69 @@ export async function scanLocal(images: ArrayBuffer[], onProgress: (p: LocalProg
       }
     }
     const constants = await pyReady;
+    // Python and the network run in separate workers, so the pages overlap: while Python looks for the
+    // staffs on one page, the network is already looking at the next. Each worker answers calls in the
+    // order they were made, so the next page's patches are asked for before this page's staff search.
+    const prepare = (p: number) => {
+      const ready = (async () => {
+        const count = await py.call<number>('open', p, images[p]);
+        return { count, patches: await py.call<Uint8Array>('patches', p, 0, count) };
+      })();
+      ready.catch(() => undefined);
+      return ready;
+    };
+    const staffs: number[] = [];
+    const detecting: Promise<void>[] = [];
+    let next = pages ? prepare(0) : null;
     for (let p = 0; p < pages; p++) {
       onProgress({ page: p, phase: 'segment', fraction: 0 });
+      const current = next!;
+      next = p + 1 < pages ? prepare(p + 1) : null;
       try {
+        const stored: Promise<unknown>[] = [];
         await timed('segment', async () => {
-          const patches = await py.call<number>('open', p, images[p]);
-          for (let i = 0; i < patches; i += BATCH) {
-            const count = Math.min(BATCH, patches - i);
-            const input = await py.call<Float32Array>('patches', p, i, count);
-            const classes = await nn.call<Uint8Array>('segment', input, count);
-            await py.call('classes', p, i, classes);
-            onProgress({ page: p, phase: 'segment', fraction: (i + count) / patches });
+          const { count, patches } = await current;
+          const size = patches.length / Math.max(1, count);
+          for (let i = 0; i < count; i += BATCH) {
+            const n = Math.min(BATCH, count - i);
+            const classes = await nn.call<Uint8Array>('segment', patches.slice(i * size, (i + n) * size), n);
+            stored.push(py.call('classes', p, i, classes));
+            onProgress({ page: p, phase: 'segment', fraction: (i + n) / count });
           }
         });
+        const found = py.call<number>('detect', p);
+        detecting[p] = Promise.all(stored)
+          .then(() => found)
+          .then(
+            (n) => {
+              staffs[p] = n;
+            },
+            (e) => fail(p, e),
+          );
+        found.catch(() => undefined);
+        onProgress({ page: p, phase: 'detect' });
       } catch (e) {
         fail(p, e);
       }
     }
+    // ---- 2. find the staffs (image processing in Python) – whatever is still running ---------------
+    await timed('detect', Promise.all(detecting));
 
-    // ---- 2. find the staffs (image processing in Python) -----------------------------------------
-    const staffs: number[] = [];
-    for (let p = 0; p < pages; p++) {
-      if (!alive(p)) continue;
-      onProgress({ page: p, phase: 'detect' });
-      try {
-        staffs[p] = await timed('detect', py.call<number>('detect', p));
-      } catch (e) {
-        fail(p, e);
-      }
-    }
+    // ---- 4 (for each page as soon as all its lines are read). write MusicXML ----------------------
+    const results: LocalResult['pages'] = [];
+    const writing: Promise<void>[] = [];
+    const write = (p: number) =>
+      (writing[p] ??= (async () => {
+        onProgress({ page: p, phase: 'write' });
+        try {
+          const xml = await timed('write', py.call<string>('finish', p));
+          results[p] = { xml };
+          onProgress({ page: p, phase: 'done' });
+          onPage?.(p, xml);
+        } catch (e) {
+          fail(p, e);
+        }
+      })());
 
     // ---- 3. read every staff: the encoder network on all pages, then the decoder network ---------
     const todo = () => images.map((_, p) => p).filter((p) => alive(p) && staffs[p]);
@@ -166,7 +223,7 @@ export async function scanLocal(images: ArrayBuffer[], onProgress: (p: LocalProg
       for (const p of todo()) {
         encoded[p] = [];
         try {
-          await timed('read', async () => {
+          await timed('encode', async () => {
             for (let s = 0; s < staffs[p]; s++) {
               const input = await py.call<Float32Array>('staff', p, s);
               encoded[p].push(await nn.call('encode', input));
@@ -179,41 +236,71 @@ export async function scanLocal(images: ArrayBuffer[], onProgress: (p: LocalProg
       }
     }
     if (todo().length) {
-      await timed('loadModels', nn.call('loadDecoder', base + m.models.decoder.file, threads));
       downloading = false;
-      for (const p of todo()) {
-        const count = staffs[p];
-        try {
-          await timed('read', async () => {
-            for (let s = 0; s < count; s++) {
-              step(p, count + s * 4, `Reading line ${s + 1} of ${count}…`);
-              const { tokens, attention } = await nn.call<{ tokens: Int32Array; attention: Float32Array }>('decode', encoded[p][s].encoded, encoded[p][s].dim, constants);
-              await py.call('staffResult', p, s, tokens, attention);
+      // Every line of music is decoded on its own, so several decoders can work side by side, each on
+      // a different line. That scales far better than giving one decoder more threads, because each
+      // step of the decoder is too small to share out well. Each decoder holds its own copy of the network.
+      const plan = decoderPlan(threads);
+      const url = base + m.models.decoder.file;
+      const decoders: RpcClient[] = [];
+      await timed('loadModels', async () => {
+        if (plan.count === 1 && plan.threads === threads) {
+          await nn.call('loadDecoder', url, threads);
+          decoders.push(nn);
+          return;
+        }
+        stop(nn);
+        const ready = await Promise.all(
+          Array.from({ length: plan.count }, async (_, k) => {
+            const worker = start('nn');
+            try {
+              const { threads: t } = await worker.call<{ threads: number }>('configure', base + 'ort/', plan.threads);
+              await worker.call('loadDecoder', url, t);
+              return worker;
+            } catch (e) {
+              stop(worker);
+              if (k === 0) throw e;
+              return null; // a helper that could not start (memory): the others do its share
             }
-          });
-        } catch (e) {
-          fail(p, e);
-        }
-        encoded[p] = [];
-      }
+          }),
+        );
+        decoders.push(...ready.filter((w): w is RpcClient => w !== null));
+      });
+      const jobs = todo().flatMap((p) => Array.from({ length: staffs[p] }, (_, s) => ({ p, s })));
+      const done = images.map(() => 0);
+      await timed('decode', () =>
+        Promise.all(
+          decoders.map(async (decoder) => {
+            for (let job = jobs.shift(); job; job = jobs.shift()) {
+              const { p, s } = job;
+              if (!alive(p)) continue;
+              try {
+                const { tokens, attention } = await decoder.call<{ tokens: Int32Array; attention: Float32Array }>('decode', encoded[p][s].encoded, encoded[p][s].dim, constants);
+                await py.call('staffResult', p, s, tokens, attention);
+                done[p]++;
+                step(p, staffs[p] + done[p] * 4, `Read ${done[p]} of ${staffs[p]} lines…`);
+                if (done[p] === staffs[p]) void write(p);
+              } catch (e) {
+                // a decoder that ran out of memory leaves its line to the others, if there are any
+                if (decoder.crashed && decoders.some((d) => d !== decoder && !d.crashed)) {
+                  jobs.push(job);
+                  return;
+                }
+                fail(p, e);
+              }
+            }
+          }),
+        ),
+      );
+      encoded.length = 0;
+      decoders.forEach(stop);
     }
-    stop(nn);
+    if (workers.has(nn)) stop(nn);
 
-    // ---- 4. write MusicXML -----------------------------------------------------------------------
-    const results: LocalResult['pages'] = [];
-    for (let p = 0; p < pages; p++) {
-      if (alive(p)) {
-        onProgress({ page: p, phase: 'write' });
-        try {
-          results[p] = { xml: await timed('write', py.call<string>('finish', p)) };
-          onProgress({ page: p, phase: 'done' });
-          continue;
-        } catch (e) {
-          fail(p, e);
-        }
-      }
-      results[p] = { error: errors[p] ?? 'This page could not be read.' };
-    }
+    // pages without lines of music, and whatever is still being written
+    for (let p = 0; p < pages; p++) if (alive(p)) void write(p);
+    await Promise.all(writing);
+    for (let p = 0; p < pages; p++) if (!results[p]) results[p] = { error: errors[p] ?? 'This page could not be read.' };
     timings.total = Math.round((performance.now() - t0) / 100) / 10;
     return { pages: results, timings };
   };

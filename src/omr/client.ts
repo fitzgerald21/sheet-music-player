@@ -121,6 +121,38 @@ export async function scanPages(images: PageImage[], settings: Settings, onProgr
     const buffers = images.map((img) => Uint8Array.from(atob(img.data), (c) => c.charCodeAt(0)).buffer);
     const say = (page: number, label: string, phase: 'thinking' | 'writing' | 'done' = 'thinking', measures = 0) => onProgress({ page, progress: { phase, label, measures, chars: 0 } });
     const started = new Set<number>();
+    const removed = { parts: 0, measures: 0 };
+    const scores: ReturnType<typeof parseMusicXML>[] = [];
+    const warnings: string[] = [];
+    const extras = extrasConfig(settings);
+    const want = { info: settings.extrasInfo, chords: settings.extrasChords, lyrics: settings.extrasLyrics, marks: settings.extrasMarks };
+    const wanted = [want.info && 'title and tempo', want.chords && 'chords', want.lyrics && 'lyrics', want.marks && 'expression marks'].filter(Boolean).join(', ').replace(/, ([^,]*)$/, ' and $1');
+    const added = { chords: 0, lyrics: 0, marks: 0, pages: 0 };
+    // Each page goes on to the AI step as soon as it is read, while the device reads the next pages.
+    const handle = async (i: number, xml: string) => {
+      const cleaned = cleanScanXml(xml);
+      const s = parseMusicXML(cleaned.xml);
+      if (s.parts.length === 1 && s.parts[0].staves.length === 2) s.parts[0].name = 'Piano';
+      scores[i] = s;
+      removed.parts += cleaned.summary.parts;
+      removed.measures += cleaned.summary.measures;
+      if (extras) {
+        say(i, `Reading the ${wanted}…`, 'writing');
+        try {
+          const pieces = want.marks ? await detailPieces(images[i]) : [];
+          const summary = applyExtras(s, await readExtras(extras, images[i], s, signal, want, pieces), want);
+          added.chords += summary.chords;
+          added.lyrics += summary.lyrics;
+          added.marks += summary.marks ?? 0;
+          added.pages++;
+        } catch (e) {
+          if (signal.aborted) throw e;
+          warnings.push(`Page ${i + 1}: the ${wanted} could not be added (${e instanceof Error ? e.message : String(e)})`);
+        }
+      }
+      say(i, 'Done', 'done', s.measures.length);
+    };
+    const handled = new Map<number, Promise<void>>();
     const result = await scanLocal(
       buffers,
       (p) => {
@@ -137,41 +169,17 @@ export async function scanPages(images: PageImage[], settings: Settings, onProgr
         else if (p.phase === 'write') say(p.page, 'Writing the score…', 'writing');
       },
       signal,
+      (i, xml) => {
+        const work = handle(i, xml);
+        work.catch(() => undefined); // awaited below; this only stops an early failure being reported twice
+        handled.set(i, work);
+      },
     );
-    const removed = { parts: 0, measures: 0 };
-    const scores: ReturnType<typeof parseMusicXML>[] = [];
-    const warnings: string[] = [];
-    const extras = extrasConfig(settings);
-    const want = { info: settings.extrasInfo, chords: settings.extrasChords, lyrics: settings.extrasLyrics, marks: settings.extrasMarks };
-    const wanted = [want.info && 'title and tempo', want.chords && 'chords', want.lyrics && 'lyrics', want.marks && 'expression marks'].filter(Boolean).join(', ').replace(/, ([^,]*)$/, ' and $1');
-    const added = { chords: 0, lyrics: 0, marks: 0, pages: 0 };
     await Promise.all(
-      result.pages.map(async (p, i) => {
-        if (!p.xml) {
-          warnings.push(`Page ${i + 1} could not be read: ${p.error ?? 'unknown problem'}`);
-          return;
-        }
-        const cleaned = cleanScanXml(p.xml);
-        const s = parseMusicXML(cleaned.xml);
-        if (s.parts.length === 1 && s.parts[0].staves.length === 2) s.parts[0].name = 'Piano';
-        scores[i] = s;
-        removed.parts += cleaned.summary.parts;
-        removed.measures += cleaned.summary.measures;
-        if (extras) {
-          say(i, `Reading the ${wanted}…`, 'writing');
-          try {
-            const pieces = want.marks ? await detailPieces(images[i]) : [];
-            const summary = applyExtras(s, await readExtras(extras, images[i], s, signal, want, pieces), want);
-            added.chords += summary.chords;
-            added.lyrics += summary.lyrics;
-            added.marks += summary.marks ?? 0;
-            added.pages++;
-          } catch (e) {
-            if (signal.aborted) throw e;
-            warnings.push(`Page ${i + 1}: the ${wanted} could not be added (${e instanceof Error ? e.message : String(e)})`);
-          }
-        }
-        say(i, 'Done', 'done', s.measures.length);
+      result.pages.map((p, i) => {
+        if (handled.has(i)) return handled.get(i);
+        if (p.xml) return handle(i, p.xml);
+        warnings.push(`Page ${i + 1} could not be read: ${p.error ?? 'unknown problem'}`);
       }),
     );
     const read = scores.filter(Boolean);

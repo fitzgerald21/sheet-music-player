@@ -78,6 +78,131 @@ for _name, _mod in list(sys.modules.items()):
     if _name.startswith("homr") and getattr(_mod, "eprint", None) is not None:
         _mod.eprint = _quiet_eprint
 
+import homr.bounding_boxes as _bb  # noqa: E402
+
+# ---- speed-ups for homr's staff detection -------------------------------------------------------
+# Finding the staffs compares every pair of boxes on the page, in pure Python. Python in the browser is
+# several times slower than on a desktop, so these two hot spots are replaced by versions that give
+# exactly the same answers: the cheap distance pre-check without isinstance() on abstract classes,
+# and the pairwise merge with that pre-check done for all pairs at once in numpy.
+_touch_kind = {}
+
+
+def _can_shapes_possibly_touch(self, other):
+    cls = other.__class__
+    kind = _touch_kind.get(cls)
+    if kind is None:
+        kind = 1 if issubclass(cls, _bb.BoundingBox) else 2 if issubclass(cls, _bb.AngledBoundingBox) else 0
+        _touch_kind[cls] = kind
+    if kind == 1:
+        center2, axes2, _ = other.rotated_box
+    elif kind == 2:
+        center2, axes2, _ = other.box
+    else:
+        raise ValueError(f"Unknown type {cls}")
+    center1, axes1, _ = self.box
+    distance = ((center1[0] - center2[0]) ** 2 + (center1[1] - center2[1]) ** 2) ** 0.5
+    return not distance > max(axes1) + max(axes2)
+
+
+_original_merge = _bb.merge_overlaying_bounding_boxes
+
+
+def _merge_overlaying_bounding_boxes(boxes):
+    """
+    Same groups, in the same order, as homr's: boxes that overlap directly or through others, each group
+    in page order and the groups ordered by their first box.
+    """
+    n = len(boxes)
+    if n < 2 or not all(isinstance(b, _bb.AngledBoundingBox) for b in boxes):
+        return _original_merge(boxes)
+    centers = np.array([b.box[0] for b in boxes], dtype=np.float64)
+    reach = np.array([max(b.box[1]) for b in boxes], dtype=np.float64)
+    uf = _bb.UnionFind(n)
+    for i in range(n - 1):
+        d = np.hypot(centers[i + 1 :, 0] - centers[i, 0], centers[i + 1 :, 1] - centers[i, 1])
+        # a little slack, so rounding can never drop a pair; the exact test decides
+        near = np.nonzero(d <= (reach[i + 1 :] + reach[i]) * (1 + 1e-9) + 1e-6)[0]
+        box = boxes[i]
+        for k in near:
+            j = i + 1 + int(k)
+            if box.is_overlapping(boxes[j]):
+                uf.union(i, j)
+    groups = {}
+    for i in range(n):
+        groups.setdefault(uf.find(i), []).append(boxes[i])
+    return list(groups.values())
+
+
+_bb.AngledBoundingBox._can_shapes_possibly_touch = _can_shapes_possibly_touch
+_bb.merge_overlaying_bounding_boxes = _merge_overlaying_bounding_boxes
+
+import homr.staff_detection as _sd  # noqa: E402
+
+
+def _find_staff_anchors(staff_lines, anchor_symbols, are_clefs=False):
+    """
+    homr 0.7.1's find_staff_anchors, unchanged except that the staff lines near each symbol are picked
+    out with numpy before the exact (and slow) intersection test runs on them.
+    """
+    result = []
+    if staff_lines:
+        centers = np.array([line.box[0] for line in staff_lines], dtype=np.float64)
+        reach = np.array([max(line.box[1]) for line in staff_lines], dtype=np.float64)
+
+    def intersecting(bar):
+        if not staff_lines:
+            return []
+        (cx, cy), axes, _ = bar.box
+        d = np.hypot(centers[:, 0] - cx, centers[:, 1] - cy)
+        near = np.nonzero(d <= (reach + max(axes)) * (1 + 1e-9) + 1e-6)[0]
+        return [staff_lines[i] for i in near if staff_lines[i].is_intersecting(bar)]
+
+    for center_symbol in anchor_symbols:
+        if are_clefs:
+            adjacent = [
+                center_symbol.move_to_x_horizontal_by(-10),
+                center_symbol,
+                center_symbol.move_to_x_horizontal_by(10),
+                center_symbol.move_to_x_horizontal_by(30),
+                center_symbol.move_to_x_horizontal_by(60),
+                center_symbol.move_to_x_horizontal_by(80),
+            ]
+        else:
+            adjacent = [
+                center_symbol.move_to_x_horizontal_by(-10),
+                center_symbol.move_to_x_horizontal_by(-5),
+                center_symbol,
+                center_symbol.move_to_x_horizontal_by(5),
+                center_symbol.move_to_x_horizontal_by(10),
+            ]
+        for symbol in adjacent:
+            estimated_unit_size = round(symbol.size[1] / (_sd.constants.number_of_lines_on_a_staff - 1))
+            thickened_bar_line = symbol.make_box_taller(estimated_unit_size)
+            overlapping_staff_lines = intersecting(thickened_bar_line)
+            connected_lines = _sd.connect_staff_lines(overlapping_staff_lines, estimated_unit_size)
+            if len(connected_lines) > _sd.constants.number_of_lines_on_a_staff:
+                connected_lines = [
+                    line
+                    for line in connected_lines
+                    if (line.max_x - line.min_x) > _sd.constants.is_short_connected_line(estimated_unit_size)
+                ]
+            if not len(connected_lines) == _sd.constants.number_of_lines_on_a_staff:
+                continue
+            if not _sd.are_lines_parallel(connected_lines, estimated_unit_size):
+                continue
+            if _sd.are_lines_crossing(connected_lines):
+                continue
+            if not are_clefs and not _sd.begins_or_ends_on_one_staff_line(
+                symbol, connected_lines, estimated_unit_size
+            ):
+                continue
+            result.append(_sd.StaffAnchor(connected_lines, symbol))
+    return result
+
+
+_sd.find_staff_anchors = _find_staff_anchors
+
 WIN = 320
 _SPECIAL = ("[BOS]", "[EOS]", "[PAD]")
 
@@ -174,12 +299,14 @@ class Job:
         return len(self._positions)
 
     def segnet_batch(self, start, count):
-        """float32 [count, 3, 320, 320]"""
+        """
+        uint8 [count, 320, 320], the grey patches. The network reads each as float32 [3, 320, 320]
+        with the grey value in all three channels; the caller makes that copy.
+        """
         patches = []
         for y, x in self._positions[start : start + count]:
-            grey = _segnet.extract_patch(self._image[np.newaxis, :, :], y, x, WIN)
-            patches.append(np.repeat(grey, 3, axis=0).astype(np.float32))
-        return np.ascontiguousarray(np.stack(patches, axis=0))
+            patches.append(_segnet.extract_patch(self._image[np.newaxis, :, :], y, x, WIN)[0])
+        return np.ascontiguousarray(np.stack(patches, axis=0).astype(np.uint8, copy=False))
 
     def set_segnet_classes(self, start, classes):
         """classes: uint8 [count, 320, 320], the arg-max class of every pixel."""
