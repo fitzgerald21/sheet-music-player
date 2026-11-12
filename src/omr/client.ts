@@ -126,6 +126,8 @@ export async function scanPages(images: PageImage[], settings: Settings, onProgr
       signal,
     );
     const { parseMusicXML } = await import('../importers/musicxml');
+    const { cleanScanXml } = await import('./local/clean');
+    const removed = { parts: 0, measures: 0 };
     const scores: ReturnType<typeof parseMusicXML>[] = [];
     const warnings: string[] = [];
     const extras = extrasConfig(settings);
@@ -138,8 +140,12 @@ export async function scanPages(images: PageImage[], settings: Settings, onProgr
           warnings.push(`Page ${i + 1} could not be read: ${p.error ?? 'unknown problem'}`);
           return;
         }
-        const s = parseMusicXML(p.xml);
+        const cleaned = cleanScanXml(p.xml);
+        const s = parseMusicXML(cleaned.xml);
+        if (s.parts.length === 1 && s.parts[0].staves.length === 2) s.parts[0].name = 'Piano';
         scores[i] = s;
+        removed.parts += cleaned.summary.parts;
+        removed.measures += cleaned.summary.measures;
         if (extras) {
           say(i, `Reading the ${wanted}…`, 'writing');
           try {
@@ -167,6 +173,8 @@ export async function scanPages(images: PageImage[], settings: Settings, onProgr
         ? `Notes and rhythms were read on this device with homr. ${[want.info && 'The title and tempo', want.chords && `${added.chords} chord symbols`, want.lyrics && `${added.lyrics} lyric syllables`].filter(Boolean).join(', ')} came from ${extras!.model} – check them against the page.`
         : 'Read on this device with homr. Notes and rhythms only: add the title, tempo, chord symbols and lyrics yourself.',
     ];
+    if (removed.parts || removed.measures)
+      score.notes.push(`Left out ${[removed.parts && `${removed.parts} stray part${removed.parts > 1 ? 's' : ''}`, removed.measures && `${removed.measures} empty or stray measure${removed.measures > 1 ? 's' : ''}`].filter(Boolean).join(' and ')} that came from the edge of the photo or print showing through the page.`);
     return { score, warnings, repaired: [] };
   }
   if (settings.engine === 'audiveris') {

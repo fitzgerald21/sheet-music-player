@@ -1,3 +1,4 @@
+import { measureTicks } from './duration';
 import { fitScore, fullRest } from './fix';
 import { Score, cloneScore } from './types';
 
@@ -19,9 +20,11 @@ export function mergeScores(scores: Score[]): Score {
       const copy = { ...structuredClone(m), staves: structuredClone(staves) };
       if (i === 0) {
         if (s.key !== key && copy.key === undefined) copy.key = s.key;
-        if (s.time.join('/') !== time.join('/') && !copy.time) copy.time = s.time;
+        // a page without a printed time signature gets a guessed one: only a different length is a real change
+        if (measureTicks(s.time) !== measureTicks(time) && !copy.time) copy.time = s.time;
         delete copy.pickup;
       }
+      if (copy.key === key) delete copy.key;
       if (copy.key !== undefined) key = copy.key;
       if (copy.time) time = copy.time;
       out.measures.push(copy);
