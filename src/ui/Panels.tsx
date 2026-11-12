@@ -1,4 +1,4 @@
-import { ReactNode, useState } from 'react';
+import { ReactNode, useEffect, useRef, useState } from 'react';
 import { Icon } from './Icons';
 import { INSTRUMENTS } from '../audio/engine';
 import { Clef, InstrumentId, Measure, Navigation, Score, cloneScore } from '../model/types';
@@ -8,6 +8,8 @@ import { Settings, Engine } from '../storage';
 import { COMPAT_PRESETS } from '../omr/openaiCompat';
 import { DEFAULT_EXTRAS_MODEL } from '../omr/annotate';
 import { detectChords, removeChords } from '../model/chordDetect';
+import { AssistantError, applyAnswer, askAssistant } from '../ai/assistant';
+import type { CompatConfig } from '../omr/openaiCompat';
 import { keyAt, timeAt } from '../model/fix';
 
 export function Sheet({ title, onClose, children }: { title: string; onClose: () => void; children: ReactNode }) {
@@ -409,10 +411,37 @@ export function SettingsPanel({ settings, onChange, onClose, serverKey, audiveri
 }
 
 // ---------------- Chords ----------------
-export function ChordsPanel({ score, onApply, onClose, playChords, setPlayChords }: { score: Score; onApply: (s: Score, msg: string) => void; onClose: () => void; playChords: boolean; setPlayChords: (b: boolean) => void }) {
+export function ChordsPanel({ score, onApply, onClose, playChords, setPlayChords, ai }: { score: Score; onApply: (s: Score, msg: string) => void; onClose: () => void; playChords: boolean; setPlayChords: (b: boolean) => void; ai: CompatConfig | null }) {
   const has = score.measures.some((m) => m.chords?.length);
   const [granularity, setGranularity] = useState<'auto' | 'measure' | 'beat'>('auto');
   const [overwrite, setOverwrite] = useState(!has);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const abort = useRef<AbortController | null>(null);
+  useEffect(() => () => abort.current?.abort(), []);
+  const writeWithAi = async () => {
+    if (!ai) return;
+    const ctl = new AbortController();
+    abort.current = ctl;
+    setBusy(true);
+    setError(null);
+    try {
+      const answer = await askAssistant(ai, score, 'Write the chord symbols for the whole piece.', [], { mode: 'chords', signal: ctl.signal });
+      // without "replace", measures that already have chord symbols are left alone
+      if (!overwrite) answer.measures = answer.measures.filter((m) => !score.measures[m.m - 1]?.chords?.length);
+      const res = applyAnswer(score, answer, 'chords');
+      if (res.unchanged) setError(answer.reply || 'The AI model did not suggest any chord symbols.');
+      else {
+        const n = res.changed.reduce((a, i) => a + (res.score.measures[i].chords?.length ?? 0), 0);
+        onApply(res.score, `Wrote ${n} chord symbol${n === 1 ? '' : 's'} – check them by ear`);
+        onClose();
+      }
+    } catch (e) {
+      if (!ctl.signal.aborted) setError(e instanceof AssistantError ? e.message : 'Something went wrong. Nothing was changed.');
+    } finally {
+      setBusy(false);
+    }
+  };
   return (
     <Sheet title="Chord symbols" onClose={onClose}>
       <p className="hint">
@@ -435,7 +464,17 @@ export function ChordsPanel({ score, onApply, onClose, playChords, setPlayChords
           const { score: s, added } = detectChords(score, { granularity, overwrite });
           onApply(s, added ? `Added ${added} chord symbol${added === 1 ? '' : 's'}` : 'No chords found');
           onClose();
-        }}>Detect chords</button>
+        }} disabled={busy}>Detect chords</button>
+      </div>
+      <h3 className="sub-h">With AI</h3>
+      <p className="hint">
+        An AI model reads the notes together with the detector’s guesses and writes the chords a musician would. It is better at slash chords,
+        added-note chords and quick changes. {ai ? 'The notes of the score are sent to the AI service set in Settings.' : 'Needs an AI key – add one in Settings.'}
+      </p>
+      {error && <p className="hint" role="alert" style={{ color: 'var(--danger)' }}>{error}</p>}
+      <div className="row-end">
+        {busy && <button className="btn" onClick={() => abort.current?.abort()}>Stop</button>}
+        <button className="btn primary" onClick={() => void writeWithAi()} disabled={!ai || busy}>{busy ? 'Writing chords…' : 'Write chords with AI'}</button>
       </div>
     </Sheet>
   );

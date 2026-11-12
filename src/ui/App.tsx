@@ -5,6 +5,8 @@ import { ScanView } from './ScanView';
 import { Library } from './Library';
 import { EditPalette, EditAction } from './EditPalette';
 import { Transport } from './Transport';
+import { AssistantBar, AssistantNote } from './AssistantBar';
+import { AssistantError, Mark, Turn, applyAnswer, askAssistant, assistantConfig, sameMark } from '../ai/assistant';
 import { ChordsPanel, InfoPanel, MeasurePanel, PartsPanel, SettingsPanel, TransposePanel, Sheet } from './Panels';
 import { PrintView } from './PrintView';
 import { PerformView } from './PerformView';
@@ -67,6 +69,13 @@ export function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [notesOpen, setNotesOpen] = useState(true);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [assistOpen, setAssistOpen] = useState(false);
+  const [marks, setMarks] = useState<Mark[]>([]);
+  const [assistBusy, setAssistBusy] = useState(false);
+  const [assistNote, setAssistNote] = useState<AssistantNote | null>(null);
+  const [changed, setChanged] = useState<number[]>([]);
+  const assistHistory = useRef<Turn[]>([]);
+  const assistAbort = useRef<AbortController | null>(null);
 
   const [playState, setPlayState] = useState<PlayState>('stopped');
   const [loadingAudio, setLoadingAudio] = useState(false);
@@ -115,6 +124,12 @@ export function App() {
     setSel(null);
     setEditMode(false);
     setNotesOpen(true);
+    assistAbort.current?.abort();
+    setAssistOpen(false);
+    setMarks([]);
+    setChanged([]);
+    setAssistNote(null);
+    assistHistory.current = [];
     setView('score');
   }, [store]);
 
@@ -482,6 +497,18 @@ export function App() {
 
   const onSelect = useCallback((s: Selection | null, additive: boolean) => {
     setMoreOpen(false);
+    if (assistOpen) {
+      // while asking for a change, a tap points at something instead of selecting it
+      if (!s || !score) return;
+      let mark: Mark = { kind: 'measure', m: s.m0 };
+      if (s.eventId) {
+        const loc = findEvent(score, s.eventId);
+        const e = loc ? getEvent(score, loc) : null;
+        mark = { kind: 'note', eventId: s.eventId, pitchIdx: e && e.pitches.length > 1 ? s.pitchIdx : null };
+      }
+      setMarks((list) => (list.some((x) => sameMark(x, mark)) ? list.filter((x) => !sameMark(x, mark)) : [...list, mark]));
+      return;
+    }
     if (!s) {
       setSel(null);
       return;
@@ -510,7 +537,62 @@ export function App() {
         void engine.init().then(() => engine.preview(midis));
       }
     }
-  }, [editMode, sel, playState, score, loop, startAt]);
+  }, [editMode, sel, playState, score, loop, startAt, assistOpen]);
+
+  // ---------------- asking for a change ----------------
+  const aiConfig = useMemo(() => assistantConfig(settings), [settings]);
+
+  const openAssistant = useCallback(() => {
+    setMoreOpen(false);
+    setAssistOpen(true);
+    setAssistNote(null);
+    setChanged([]);
+    // what was selected becomes the first highlight
+    if (sel && score) {
+      const first: Mark[] = [];
+      if (sel.eventId) {
+        const loc = findEvent(score, sel.eventId);
+        const e = loc ? getEvent(score, loc) : null;
+        first.push({ kind: 'note', eventId: sel.eventId, pitchIdx: e && e.pitches.length > 1 ? sel.pitchIdx : null });
+      } else for (let m = sel.m0; m <= sel.m1 && m < sel.m0 + 16; m++) first.push({ kind: 'measure', m });
+      setMarks(first);
+    }
+    setSel(null);
+  }, [sel, score]);
+
+  const closeAssistant = useCallback(() => {
+    assistAbort.current?.abort();
+    setAssistOpen(false);
+    setMarks([]);
+    setChanged([]);
+    setAssistBusy(false);
+  }, []);
+
+  const sendToAssistant = useCallback(async (text: string) => {
+    if (!score || !aiConfig) return;
+    const ctl = new AbortController();
+    assistAbort.current = ctl;
+    setAssistBusy(true);
+    setAssistNote(null);
+    setChanged([]);
+    try {
+      const answer = await askAssistant(aiConfig, score, text, marks, { history: assistHistory.current, signal: ctl.signal });
+      const res = applyAnswer(score, answer);
+      const reply = answer.reply || (res.unchanged ? 'Nothing was changed.' : 'Done.');
+      assistHistory.current = [...assistHistory.current, { ask: text, reply }].slice(-6);
+      if (!res.unchanged) {
+        store.set(res.score);
+        setChanged(res.changed);
+        setMarks([]);
+      }
+      setAssistNote({ kind: 'reply', text: reply, problems: res.problems, canUndo: !res.unchanged });
+    } catch (e) {
+      if (ctl.signal.aborted) setAssistNote({ kind: 'reply', text: 'Stopped. Nothing was changed.' });
+      else setAssistNote({ kind: 'error', text: e instanceof AssistantError ? e.message : 'Something went wrong. Nothing was changed.' });
+    } finally {
+      setAssistBusy(false);
+    }
+  }, [score, aiConfig, marks, store]);
 
   // ---------------- import / export ----------------
   const importFile = async (f: File) => {
@@ -630,6 +712,7 @@ export function App() {
         <button className={`btn sm ${editMode ? 'primary' : ''}`} onClick={() => { setEditMode((x) => !x); setSel(null); if (engine.state !== 'playing') viewRef.current?.setPlaying(new Set(), null, false); }} aria-pressed={editMode} aria-label={editMode ? 'Done editing' : 'Edit'}>
           <Icon.edit size={16} /> <span className="hide-xs">{editMode ? 'Done' : 'Edit'}</span>
         </button>
+        <button className={`icon-btn toggle ${assistOpen ? 'on' : ''}`} onClick={() => (assistOpen ? closeAssistant() : openAssistant())} aria-pressed={assistOpen} aria-label="Ask for a change" title="Ask for a change in words"><Icon.spark /></button>
         <button className="btn sm accent-soft" onClick={() => { stop(); setView('perform'); }} aria-label="Play along" title="Play along on your piano">
           <Icon.keyboard size={16} /> <span className="hide-xs">Play along</span>
         </button>
@@ -641,6 +724,7 @@ export function App() {
             <div className="menu" onMouseLeave={() => setMoreOpen(false)}>
               <button onClick={() => { setMoreOpen(false); setView('scan'); }}><Icon.camera size={16} /> Scan new music</button>
               <button onClick={() => { setMoreOpen(false); setPanel('info'); }}><Icon.info size={16} /> Score details</button>
+              <button onClick={openAssistant}><Icon.spark size={16} /> Ask for a change…</button>
               <button onClick={() => { setMoreOpen(false); setPanel('chords'); }}><Icon.music size={16} /> Chord symbols…</button>
               <button role="menuitemcheckbox" aria-checked={settings.showChords} onClick={() => setSettings({ ...settings, showChords: !settings.showChords })}><span className="menu-tick">{settings.showChords ? '✓' : ''}</span> Show chord symbols</button>
               <button role="menuitemcheckbox" aria-checked={settings.showLyrics} onClick={() => setSettings({ ...settings, showLyrics: !settings.showLyrics })}><span className="menu-tick">{settings.showLyrics ? '✓' : ''}</span> Show lyrics</button>
@@ -659,7 +743,7 @@ export function App() {
         </div>
       </header>
 
-      {editMode && <EditPalette event={selectedEvent} onAction={onAction} hasSelection={!!sel} chordMode={chordMode} setChordMode={setChordMode} />}
+      {editMode && !assistOpen && <EditPalette event={selectedEvent} onAction={onAction} hasSelection={!!sel} chordMode={chordMode} setChordMode={setChordMode} />}
 
       {notesOpen && score.notes && score.notes.length > 0 && !editMode && (
         <div className="banner">
@@ -680,7 +764,7 @@ export function App() {
         </div>
       )}
 
-      {!editMode && sel && (
+      {!editMode && !assistOpen && sel && (
         <div className="sel-bar">
           <span>{sel.m0 === sel.m1 ? `Measure ${sel.m0 + 1}` : `Measures ${sel.m0 + 1}–${sel.m1 + 1}`}{loop ? ' · looping' : ''}</span>
           <span className="grow" />
@@ -691,8 +775,25 @@ export function App() {
       )}
 
       <main className="score-scroll">
-        <ScoreView ref={viewRef} score={shown ?? score} zoom={zoom} selection={sel} onSelect={onSelect} editMode={editMode} />
+        <ScoreView ref={viewRef} score={shown ?? score} zoom={zoom} selection={sel} onSelect={onSelect} editMode={editMode || assistOpen} marks={assistOpen ? marks : undefined} changed={changed} />
       </main>
+
+      {assistOpen && (
+        <AssistantBar
+          score={score}
+          marks={marks}
+          onRemoveMark={(m) => setMarks((list) => list.filter((x) => !sameMark(x, m)))}
+          onClearMarks={() => setMarks([])}
+          busy={assistBusy}
+          note={assistNote}
+          ready={!!aiConfig}
+          onSend={(t) => void sendToAssistant(t)}
+          onStop={() => assistAbort.current?.abort()}
+          onUndo={() => { store.undo(); setChanged([]); setAssistNote({ kind: 'reply', text: 'Undone.' }); assistHistory.current = assistHistory.current.slice(0, -1); }}
+          onClose={closeAssistant}
+          onSettings={() => setPanel('settings')}
+        />
+      )}
 
       <Transport
         playing={playState === 'playing'}
@@ -721,6 +822,7 @@ export function App() {
       {panel === 'chords' && (
         <ChordsPanel
           score={score}
+          ai={aiConfig}
           playChords={settings.playChords}
           setPlayChords={(b) => setSettings({ ...settings, playChords: b })}
           onApply={(s, msg) => { commit(s); flash(msg); }}

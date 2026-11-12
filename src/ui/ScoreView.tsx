@@ -2,6 +2,7 @@ import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from 're
 import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
 import { toMusicXML } from '../model/musicxml';
 import { Score } from '../model/types';
+import type { Mark } from '../ai/assistant';
 
 export interface Selection {
   eventId: string | null;
@@ -32,6 +33,10 @@ interface Props {
   paper?: 'white' | 'cream' | 'dark';
   /** turn off tap-to-select (performance view handles taps itself) */
   passive?: boolean;
+  /** things highlighted for a request to the assistant */
+  marks?: Mark[];
+  /** measures the assistant just changed */
+  changed?: number[];
 }
 
 interface MeasureBox {
@@ -43,7 +48,7 @@ interface MeasureBox {
 
 const UNIT = 10;
 
-export const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ score, zoom, selection, onSelect, onRendered, editMode, paper, passive }, ref) {
+export const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ score, zoom, selection, onSelect, onRendered, editMode, paper, passive, marks, changed }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
   const elemsRef = useRef(new Map<string, SVGGElement[]>());
@@ -236,6 +241,29 @@ export const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({
     } else box.style.display = 'none';
   }, [selection, renderTick]);
 
+  // highlights for the assistant
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    host.querySelectorAll('.smp-note.marked').forEach((g) => g.classList.remove('marked'));
+    host.querySelectorAll('.smp-notehead-marked').forEach((g) => g.classList.remove('smp-notehead-marked'));
+    for (const mk of marks ?? []) {
+      if (mk.kind !== 'note') continue;
+      const gs = elemsRef.current.get(mk.eventId) ?? [];
+      if (mk.pitchIdx === null) gs.forEach((g) => g.classList.add('marked'));
+      else if (gs[0]) noteheads(gs[0])[mk.pitchIdx]?.classList.add('smp-notehead-marked');
+    }
+  }, [marks, renderTick]);
+
+  // bring what the assistant changed into view
+  useEffect(() => {
+    const box = changed?.length ? measureBoxes.current[changed[0]] : undefined;
+    const scroller = hostRef.current?.closest('.score-scroll') as HTMLElement | null;
+    if (!box || !scroller) return;
+    const top = box.y - scroller.scrollTop;
+    if (top < 20 || top + box.h > scroller.clientHeight - 20) scroller.scrollTo({ top: Math.max(0, box.y - scroller.clientHeight * 0.3), behavior: 'smooth' });
+  }, [changed, renderTick]);
+
   useImperativeHandle(ref, () => ({
     setPlaying(ids, measure, follow) {
       const prev = playingRef.current;
@@ -346,6 +374,14 @@ export const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({
         <div ref={hostRef} className="score-host" />
         <div ref={cursorRef} className="play-cursor" />
         <div ref={selBoxRef} className="sel-box" />
+        {(marks ?? []).map((mk) => {
+          const b = mk.kind === 'measure' ? measureBoxes.current[mk.m] : undefined;
+          return b ? <div key={`k${mk.kind === 'measure' ? mk.m : ''}`} className="mark-box" style={{ left: b.x, top: b.y, width: b.w, height: b.h }} /> : null;
+        })}
+        {(changed ?? []).map((mi) => {
+          const b = measureBoxes.current[mi];
+          return b ? <div key={`c${mi}`} className="changed-box" style={{ left: b.x, top: b.y, width: b.w, height: b.h }} /> : null;
+        })}
       </div>
     </div>
   );

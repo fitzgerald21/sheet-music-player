@@ -86,6 +86,15 @@ The workflow in `.github/workflows/pages.yml` builds and publishes the app on ev
 - "Careful" accuracy is the default. Use "Very careful" for very dense pages.
 - After scanning, play it through. Anything Claude was unsure about, and any measure whose rhythm had to be auto-repaired, is listed under **Score details**.
 
+## Asking for a change in words
+
+The ✦ button opens a bar where you type what should change: “in measure 25, change the first C in the treble to C sharp”, “remove the tie from just the G and keep the C and E”, “make these two measures an octave lower in the left hand”, “transpose it up a whole step”.
+
+- **Pointing is optional.** While the bar is open, tap notes (or one note inside a chord) and empty parts of measures to highlight them. Highlights show as chips above the text box and are sent along as “the user means this”.
+- **What is sent:** the notes of the score as text, your request and the highlights go to the AI service set in Settings (the same OpenRouter key as for lyrics and chords). No photo is sent.
+- **What comes back** is checked before it is used: measures that cannot be read or do not add up are left alone or padded, and the bar says so. Changed measures flash green, and **Undo** in the bar takes the whole request back.
+- **Chord symbols…** in the menu has **Write chords with AI**, which hands the notes and the built-in detector's guesses to the same service.
+
 ## Editing shortcuts (keyboard)
 
 | Key | Action |
