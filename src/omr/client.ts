@@ -6,7 +6,9 @@ import Anthropic from '@anthropic-ai/sdk';
 import { PageImage, PagesProgress, transcribePages, transcribePagesWith } from './transcribe';
 import { PageTranscription } from './schema';
 import { CompatConfig, transcribePageCompat } from './openaiCompat';
-import { DEFAULT_EXTRAS_MODEL } from './annotate';
+import { DEFAULT_EXTRAS_MODEL, applyExtras, readExtras } from './annotate';
+import { cleanScanXml } from './local/clean';
+import { parseMusicXML, musicXmlText } from '../importers/musicxml';
 import { ConvertResult, convertPages } from './convert';
 import { Settings } from '../storage';
 import { mergeScores } from '../model/merge';
@@ -94,6 +96,16 @@ export function extrasConfig(settings: Settings): CompatConfig | null {
   return model ? { baseUrl: settings.compatBaseUrl, apiKey: settings.compatKey.trim(), model } : null;
 }
 
+/**
+ * Parts of the app are fetched when first needed. After the site has been updated, a page that was
+ * opened before the update asks for files that no longer exist; say so instead of a browser error.
+ */
+function staleApp(e: unknown): never {
+  if (e instanceof Error && /module script|dynamically imported module|error loading|failed to fetch/i.test(e.message))
+    throw new Error('The app has been updated since this page was opened. Reload the page, then scan again.');
+  throw e;
+}
+
 /** Scan pages with the configured engine and return a score. */
 export async function scanPages(images: PageImage[], settings: Settings, onProgress: (p: PagesProgress) => void, signal: AbortSignal): Promise<ConvertResult> {
   if (settings.engine === 'compat') {
@@ -103,7 +115,7 @@ export async function scanPages(images: PageImage[], settings: Settings, onProgr
     return convertPages(pages);
   }
   if (settings.engine === 'local') {
-    const { scanLocal, localScanAvailable } = await import('./local');
+    const { scanLocal, localScanAvailable } = await import('./local').catch(staleApp);
     if (!(await localScanAvailable())) throw new Error('On-device scanning is not included in this copy of the app. Run “npm run fetch-homr” and rebuild, or pick another reader in Settings.');
     const buffers = images.map((img) => Uint8Array.from(atob(img.data), (c) => c.charCodeAt(0)).buffer);
     const say = (page: number, label: string, phase: 'thinking' | 'writing' | 'done' = 'thinking', measures = 0) => onProgress({ page, progress: { phase, label, measures, chars: 0 } });
@@ -125,8 +137,6 @@ export async function scanPages(images: PageImage[], settings: Settings, onProgr
       },
       signal,
     );
-    const { parseMusicXML } = await import('../importers/musicxml');
-    const { cleanScanXml } = await import('./local/clean');
     const removed = { parts: 0, measures: 0 };
     const scores: ReturnType<typeof parseMusicXML>[] = [];
     const warnings: string[] = [];
@@ -149,7 +159,6 @@ export async function scanPages(images: PageImage[], settings: Settings, onProgr
         if (extras) {
           say(i, `Reading the ${wanted}…`, 'writing');
           try {
-            const { readExtras, applyExtras } = await import('./annotate');
             const summary = applyExtras(s, await readExtras(extras, images[i], s, signal, want), want);
             added.chords += summary.chords;
             added.lyrics += summary.lyrics;
@@ -187,7 +196,6 @@ export async function scanPages(images: PageImage[], settings: Settings, onProgr
       else if (msg.type === 'error') throw new Error(msg.message as string);
       return undefined;
     });
-    const { parseMusicXML, musicXmlText } = await import('../importers/musicxml');
     const scores = [];
     const warnings: string[] = [];
     for (let i = 0; i < pages.length; i++) {
