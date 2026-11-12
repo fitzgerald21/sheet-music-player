@@ -3,7 +3,7 @@
 // photo together with the melody already found, so its only job is to read text and say where it goes.
 import { CompatConfig, extractJson } from './openaiCompat';
 import { PageImage, TranscriptionError } from './transcribe';
-import { NoteEvent, Score } from '../model/types';
+import { Hairpin, NoteEvent, Ottava, Score } from '../model/types';
 import { pitchToString } from '../model/pitch';
 
 export interface PageExtras {
@@ -13,6 +13,9 @@ export interface PageExtras {
   lyricist: string;
   tempo: number;
   measures: { m: number; chords: { beat: number; symbol: string }[]; lyrics: string[]; text?: string }[];
+  /** hairpins and octave lines: from note n1 of measure m1 to note n2 of measure m2, on one staff (1 = top) */
+  lines?: { type: string; staff: number; m1: number; n1: number; m2: number; n2: number }[];
+  tremolos?: { m: number; staff: number; note: number; slashes: number }[];
 }
 
 /** Which things the model is asked to read. */
@@ -20,12 +23,16 @@ export interface ExtrasWanted {
   info: boolean;
   chords: boolean;
   lyrics: boolean;
+  /** hairpins, octave lines and tremolo slashes */
+  marks?: boolean;
 }
-export const ALL_EXTRAS: ExtrasWanted = { info: true, chords: true, lyrics: true };
+export const ALL_EXTRAS: ExtrasWanted = { info: true, chords: true, lyrics: true, marks: true };
 
 export interface ExtrasSummary {
   chords: number;
   lyrics: number;
+  /** hairpins, octave lines and tremolos written into the score */
+  marks?: number;
   /** measures where the model gave a different number of syllables than there are sung notes */
   uneven: number[];
 }
@@ -51,12 +58,12 @@ export function lyricSlots(score: Score): NoteEvent[][] {
   });
 }
 
-const system = (want: ExtrasWanted) => `You help digitise printed sheet music. The notes of the page in the photo have already been read by a machine. You add what the machine cannot read: the title and credits, the tempo, the chord symbols above the staff and the lyrics under the top staff.
+const system = (want: ExtrasWanted) => `You help digitise printed sheet music. The notes of the page in the photo have already been read by a machine. You add what the machine cannot read: the title and credits, the tempo, the chord symbols above the staff and the lyrics under the top staff${want.marks ? ', and the hairpins, octave lines and tremolo slashes' : ''}.
 
-You are given the top staff of every measure the machine found, in reading order (system by system, left to right). Notes are written pitch/duration: w whole, h half, q quarter, 8 eighth, 16 sixteenth, a "." for each dot, "t" for a triplet, r for a rest, R for a whole-measure rest, "~" for a note tied to the next, "+" between the notes of a chord. Use the melody to find each measure in the photo. The machine sometimes misreads a note, so match measures by their overall shape and their position on the page, not note by note.
+You are given the top staff of every measure the machine found, in reading order (system by system, left to right). Notes are written pitch/duration: w whole, h half, q quarter, 8 eighth, 16 sixteenth, a "." for each dot, "t" for a triplet, r for a rest, R for a whole-measure rest, "~" for a note tied to the next, "+" between the notes of a chord. Use the melody to find each measure in the photo. The machine sometimes misreads a note, so match measures by their overall shape and their position on the page, not note by note.${want.marks ? MARKS_LISTING : ''}
 
 Reply with one JSON object and nothing else:
-{"title":"","subtitle":"","composer":"","lyricist":"","tempo":0,"measures":[{"m":1,"text":"","chords":[{"beat":1,"symbol":"Bb"}],"lyrics":["Sing","a","song"]}]}
+{"title":"","subtitle":"","composer":"","lyricist":"","tempo":0,"measures":[{"m":1,"text":"","chords":[{"beat":1,"symbol":"Bb"}],"lyrics":["Sing","a","song"]}]${want.marks ? ',"lines":[{"type":"cresc","staff":1,"m1":3,"n1":1,"m2":4,"n2":2}],"tremolos":[{"m":2,"staff":1,"note":4,"slashes":3}]' : ''}}
 
 - title, composer, lyricist: as printed on this page, "" if not printed. Title in normal capitalisation.
 - subtitle: the smaller line printed under the title, such as 'from "The Jungle Book" (1967)'; "" if there is none.
@@ -65,24 +72,51 @@ Reply with one JSON object and nothing else:
 - text: tempo and style words printed above that measure, exactly as printed ("Swing eighths", "rit.", "a tempo"); "" if none. Not dynamics and not chord symbols.
 - chords: the chord symbols printed above that measure, in order. "beat" is where the symbol sits, 1-based, in units of the time signature's lower number (1.5 = the second eighth note in 4/4). In 6/8, 9/8 and 12/8 the unit is the eighth note, so the dotted-quarter pulses fall on beats 1, 4, 7 and 10 – a symbol over the second pulse is beat 4, not beat 2. Write flats as "b" and sharps as "#": "Eb", "Bb7/F", "Edim", "F7sus4", "Gm", "F/A". Ignore guitar chord diagrams and fingering numbers. [] if none.
 - lyrics: the first verse only. Give exactly one string for every sung note of the measure – the list tells you how many. A note that starts a tie counts once; the note it is tied to is not counted. Use the syllable printed under that note; end it with "-" when the word continues on a later note ("ev-", "ry"); use "" for a note with no syllable of its own (a syllable held over several notes). [] for every measure if the music has no lyrics.
-${[!want.info && '- Do not read the title, subtitle, composer, lyricist, tempo or text: leave them "" and 0.', !want.chords && '- Do not read chord symbols: give [] for "chords" in every measure.', !want.lyrics && '- Do not read lyrics: give [] for "lyrics" in every measure.'].filter(Boolean).map((l) => l + '\n').join('')}- Never invent text that is not printed. If you cannot find a measure in the photo, give it empty chords and lyrics.`;
+${[!want.info && '- Do not read the title, subtitle, composer, lyricist, tempo or text: leave them "" and 0.', !want.chords && '- Do not read chord symbols: give [] for "chords" in every measure.', !want.lyrics && '- Do not read lyrics: give [] for "lyrics" in every measure.'].filter(Boolean).map((l) => l + '\n').join('')}${want.marks ? MARKS_RULES : ''}- Never invent text that is not printed. If you cannot find a measure in the photo, give it empty chords and lyrics.`;
 
-function describe(score: Score): string {
+const MARKS_LISTING = ` Every staff of a measure is listed, top staff first, and every note or chord has a number in front ("3:" is the third note or chord of that staff in that measure; rests have no number; " | " separates two voices on one staff, and the numbers run on through the second voice). The pitches are listed as printed on the staff.`;
+
+const MARKS_RULES = `- lines: every hairpin and every octave line on the page, one entry for each, however many measures or systems it runs over.
+  "type": "cresc" for a hairpin that opens (<), "dim" for one that closes (>), "8va" for a dashed line above a staff that starts with "8va" or "8", "8vb" for one below a staff, "15ma" / "15mb" for two octaves.
+  "staff": 1 for the top staff of the system, 2 for the next one down. A hairpin drawn between the two staves of a piano part belongs to staff 1. An octave line belongs to the staff it is drawn over (8va) or under (8vb).
+  "m1", "n1": the measure and the note number where it starts; "m2", "n2": the measure and note number where it ends. A hairpin starts at the note at its left tip and ends at the last note before its right end. An octave line starts at the note under the "8" and ends at the last note before the small hook that closes the dashed line. Look along the whole dashed line: it often carries on at the start of the next system, and ends several measures later.
+  If an octave line is already running at the top of the page (a dashed line with no "8va" at its start, continuing from the page before), start it at note 1 of the page's first measure. If it runs off the bottom of the page, end it at the last note of the last measure.
+- tremolos: every note or chord with tremolo slashes – two or three short thick slanted strokes across its stem (or above or below a whole note): {"m":2,"staff":1,"note":4,"slashes":3}. They usually sit on longer notes (half notes, dotted quarters). Beams joining several eighth or sixteenth notes are not tremolos.
+- [] for "lines" and "tremolos" if the page has none.
+`;
+
+/** The notes and chords of one staff of a measure that a mark can sit on, in the order they are listed and numbered. */
+function numberedNotes(score: Score, measure: number, staff: number): NoteEvent[] {
+  return (score.measures[measure]?.staves[staff]?.voices ?? []).flatMap((v) => v.filter((e) => !e.grace && !e.rest && e.pitches.length));
+}
+
+function describe(score: Score, want: ExtrasWanted = ALL_EXTRAS): string {
   const slots = lyricSlots(score);
   const lines = score.measures.map((m, i) => {
-    const voice = m.staves[0]?.voices[0] ?? [];
-    const notes = voice
-      .filter((e) => !e.grace)
-      .map((e) => {
-        const dur = `${e.dur}${'.'.repeat(e.dots)}${e.triplet ? 't' : ''}`;
-        if (e.rest) return e.fullMeasure ? 'R' : `r/${dur}`;
-        return `${e.pitches.map(pitchToString).join('+')}/${dur}${e.pitches.some((p) => p.tie) ? '~' : ''}`;
-      })
-      .join(' ');
+    const listing = (voices: NoteEvent[][]) => {
+      let n = 0;
+      return (
+        voices
+          .map((voice) =>
+            voice
+              .filter((e) => !e.grace)
+              .map((e) => {
+                const dur = `${e.dur}${'.'.repeat(e.dots)}${e.triplet ? 't' : ''}`;
+                if (e.rest) return e.fullMeasure ? 'R' : `r/${dur}`;
+                return `${want.marks ? `${++n}:` : ''}${e.pitches.map(pitchToString).join('+')}/${dur}${e.pitches.some((p) => p.tie) ? '~' : ''}`;
+              })
+              .join(' '),
+          )
+          .filter(Boolean)
+          .join(' | ') || 'R'
+      );
+    };
     const time = m.time ? ` (time ${m.time[0]}/${m.time[1]})` : '';
-    return `${i + 1}${time}: ${notes || 'R'}   [${slots[i].length} sung note${slots[i].length === 1 ? '' : 's'}]`;
+    const sung = `   [${slots[i].length} sung note${slots[i].length === 1 ? '' : 's'}]`;
+    if (!want.marks) return `${i + 1}${time}: ${listing((m.staves[0]?.voices ?? []).slice(0, 1))}${sung}`;
+    return [`${i + 1}${time}: ${listing(m.staves[0]?.voices ?? [])}${sung}`, ...m.staves.slice(1).map((st, k) => `    staff ${k + 2}: ${listing(st.voices)}`)].join('\n');
   });
-  return `Time signature ${score.time[0]}/${score.time[1]}. The machine found ${score.measures.length} measures on this page. Top staff, measure by measure:\n${lines.join('\n')}`;
+  return `Time signature ${score.time[0]}/${score.time[1]}. The machine found ${score.measures.length} measures on this page. ${want.marks ? 'Every staff' : 'Top staff'}, measure by measure:\n${lines.join('\n')}`;
 }
 
 function normalise(raw: unknown): PageExtras {
@@ -102,6 +136,8 @@ function normalise(raw: unknown): PageExtras {
       lyrics: (Array.isArray(m?.lyrics) ? m.lyrics : []).map(text),
       text: text(m?.text),
     })),
+    lines: (Array.isArray(r.lines) ? r.lines : []).map((l) => ({ type: text(l?.type).toLowerCase(), staff: Number(l?.staff) || 1, m1: Number(l?.m1) || 0, n1: Number(l?.n1) || 1, m2: Number(l?.m2) || 0, n2: Number(l?.n2) || 0 })),
+    tremolos: (Array.isArray(r.tremolos) ? r.tremolos : []).map((t) => ({ m: Number(t?.m) || 0, staff: Number(t?.staff) || 1, note: Number(t?.note) || 0, slashes: Number(t?.slashes) || 3 })),
   };
 }
 
@@ -118,7 +154,7 @@ export async function readExtras(cfg: CompatConfig, image: PageImage, score: Sco
         role: 'user',
         content: [
           { type: 'image_url', image_url: { url: `data:${image.mediaType};base64,${image.data}` } },
-          { type: 'text', text: describe(score) },
+          { type: 'text', text: describe(score, want) },
         ],
       },
     ],
@@ -147,6 +183,56 @@ export async function readExtras(cfg: CompatConfig, image: PageImage, score: Sco
   }
 }
 
+const LINE_TYPES: Record<string, { hairpin?: Hairpin; ottava?: Ottava }> = {
+  cresc: { hairpin: 'cresc' }, crescendo: { hairpin: 'cresc' }, dim: { hairpin: 'dim' }, decresc: { hairpin: 'dim' }, diminuendo: { hairpin: 'dim' }, decrescendo: { hairpin: 'dim' },
+  '8va': { ottava: 8 }, '8vb': { ottava: -8 }, '15ma': { ottava: 15 }, '15mb': { ottava: -15 },
+};
+
+/**
+ * Puts the hairpins, octave lines and tremolos the model found on the notes it named. The pitches
+ * under an octave line are left as the machine read them (as printed); applyOctaveLines moves them
+ * once all pages are joined. Returns how many marks were written.
+ */
+function applyMarks(score: Score, extras: PageExtras): number {
+  const staves = score.measures[0]?.staves.length ?? 0;
+  const last = score.measures.length - 1;
+  /** the n-th note of a staff in a measure; when the measure has fewer, the nearest one, searching on in `dir` through empty measures */
+  const find = (m: number, staff: number, n: number, dir: 1 | -1): NoteEvent | undefined => {
+    for (let i = Math.min(Math.max(m - 1, 0), last); i >= 0 && i <= last; i += dir) {
+      const notes = numberedNotes(score, i, staff);
+      if (notes.length) return i === m - 1 ? notes[Math.min(Math.max(n, 1), notes.length) - 1] : dir > 0 ? notes[0] : notes[notes.length - 1];
+    }
+    return undefined;
+  };
+  let count = 0;
+  for (const l of extras.lines ?? []) {
+    const kind = LINE_TYPES[l.type];
+    const staff = Math.round(l.staff) - 1;
+    if (!kind || staff < 0 || staff >= staves || l.m1 < 1 || l.m1 > last + 1) continue;
+    const m2 = Math.min(Math.max(l.m2 || l.m1, l.m1), last + 1);
+    const from = find(l.m1, staff, l.n1, 1);
+    const to = find(m2, staff, l.n2 > 0 ? l.n2 : 1e9, -1);
+    if (!from || !to) continue;
+    if (kind.hairpin) {
+      from.hairpin = kind.hairpin;
+      to.hairpinEnd = true;
+    } else {
+      from.ottava = kind.ottava;
+      to.ottavaEnd = true;
+    }
+    count++;
+  }
+  for (const t of extras.tremolos ?? []) {
+    const staff = Math.round(t.staff) - 1;
+    if (staff < 0 || staff >= staves || t.m < 1 || t.m > last + 1 || t.note < 1) continue;
+    const e = numberedNotes(score, t.m - 1, staff)[t.note - 1];
+    if (!e) continue;
+    e.tremolo = Math.min(3, Math.max(1, Math.round(t.slashes))) as 1 | 2 | 3;
+    count++;
+  }
+  return count;
+}
+
 /** Writes the model's answer into the score of that page. */
 export function applyExtras(score: Score, raw: PageExtras, want: ExtrasWanted = ALL_EXTRAS): ExtrasSummary {
   // what was switched off is dropped even if the model answered it anyway
@@ -156,6 +242,7 @@ export function applyExtras(score: Score, raw: PageExtras, want: ExtrasWanted = 
     measures: raw.measures.map((m) => ({ m: m.m, chords: want.chords ? m.chords : [], lyrics: want.lyrics ? m.lyrics : [], text: want.info ? m.text ?? '' : '' })),
   };
   const summary: ExtrasSummary = { chords: 0, lyrics: 0, uneven: [] };
+  if (want.marks) summary.marks = applyMarks(score, raw);
   if (extras.title) score.title = extras.title;
   if (extras.subtitle) score.subtitle = extras.subtitle;
   if (extras.composer) score.composer = extras.composer;

@@ -9,7 +9,7 @@ import { CompatConfig, transcribePageCompat } from './openaiCompat';
 import { DEFAULT_EXTRAS_MODEL, applyExtras, readExtras } from './annotate';
 import { cleanScanXml } from './local/clean';
 import { parseMusicXML, musicXmlText } from '../importers/musicxml';
-import { ConvertResult, convertPages } from './convert';
+import { ConvertResult, applyOctaveLines, convertPages } from './convert';
 import { Settings } from '../storage';
 import { mergeScores } from '../model/merge';
 import { completeChordTies } from '../model/fix';
@@ -91,7 +91,7 @@ export async function transcribe(images: PageImage[], settings: Settings, onProg
 /** The AI service that adds title, chords and lyrics to an on-device scan, if one is set up. */
 export function extrasConfig(settings: Settings): CompatConfig | null {
   if (settings.engine !== 'local' || !settings.localExtras || !settings.compatKey.trim()) return null;
-  if (!settings.extrasInfo && !settings.extrasChords && !settings.extrasLyrics) return null;
+  if (!settings.extrasInfo && !settings.extrasChords && !settings.extrasLyrics && !settings.extrasMarks) return null;
   const model = settings.compatModel.trim() || (/openrouter\.ai/.test(settings.compatBaseUrl) ? DEFAULT_EXTRAS_MODEL : '');
   return model ? { baseUrl: settings.compatBaseUrl, apiKey: settings.compatKey.trim(), model } : null;
 }
@@ -141,9 +141,9 @@ export async function scanPages(images: PageImage[], settings: Settings, onProgr
     const scores: ReturnType<typeof parseMusicXML>[] = [];
     const warnings: string[] = [];
     const extras = extrasConfig(settings);
-    const want = { info: settings.extrasInfo, chords: settings.extrasChords, lyrics: settings.extrasLyrics };
-    const wanted = [want.info && 'title and tempo', want.chords && 'chords', want.lyrics && 'lyrics'].filter(Boolean).join(', ').replace(/, ([^,]*)$/, ' and $1');
-    const added = { chords: 0, lyrics: 0, pages: 0 };
+    const want = { info: settings.extrasInfo, chords: settings.extrasChords, lyrics: settings.extrasLyrics, marks: settings.extrasMarks };
+    const wanted = [want.info && 'title and tempo', want.chords && 'chords', want.lyrics && 'lyrics', want.marks && 'expression marks'].filter(Boolean).join(', ').replace(/, ([^,]*)$/, ' and $1');
+    const added = { chords: 0, lyrics: 0, marks: 0, pages: 0 };
     await Promise.all(
       result.pages.map(async (p, i) => {
         if (!p.xml) {
@@ -162,6 +162,7 @@ export async function scanPages(images: PageImage[], settings: Settings, onProgr
             const summary = applyExtras(s, await readExtras(extras, images[i], s, signal, want), want);
             added.chords += summary.chords;
             added.lyrics += summary.lyrics;
+            added.marks += summary.marks ?? 0;
             added.pages++;
           } catch (e) {
             if (signal.aborted) throw e;
@@ -174,12 +175,16 @@ export async function scanPages(images: PageImage[], settings: Settings, onProgr
     const read = scores.filter(Boolean);
     if (!read.length) throw new Error(warnings.join(' ') || 'No music was found on these pages.');
     const score = mergeScores(read);
+    // notes under an octave line were read as printed: move them to where they sound
+    const pageStarts: number[] = [];
+    read.reduce((sum, s) => (pageStarts.push(sum), sum + s.measures.length), 0);
+    applyOctaveLines(score, pageStarts);
     completeChordTies(score);
     if (!score.title || score.title === 'Untitled') score.title = 'Scanned music';
     score.notes = [
       ...(score.notes ?? []),
       added.pages
-        ? `Notes and rhythms were read on this device with homr. ${[want.info && 'The title and tempo', want.chords && `${added.chords} chord symbols`, want.lyrics && `${added.lyrics} lyric syllables`].filter(Boolean).join(', ')} came from ${extras!.model} – check them against the page.`
+        ? `Notes and rhythms were read on this device with homr. ${[want.info && 'The title and tempo', want.chords && `${added.chords} chord symbols`, want.lyrics && `${added.lyrics} lyric syllables`, want.marks && `${added.marks} hairpins, octave lines and tremolos`].filter(Boolean).join(', ')} came from ${extras!.model} – check them against the page.`
         : 'Read on this device with homr. Notes and rhythms only: add the title, tempo, chord symbols and lyrics yourself.',
     ];
     if (removed.parts || removed.measures)

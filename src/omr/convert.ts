@@ -147,6 +147,7 @@ export function applyOctaveLines(score: Score, pageStarts: number[] = [0]): void
     const notes = staffEvents(score, staff, lens).filter((p) => !p.e.rest && p.e.pitches.length);
     let open: NoteEvent['ottava'];
     let last: NoteEvent | undefined;
+    let closed: { e: NoteEvent; value: NoteEvent['ottava'] } | undefined;
     let page = 0;
     for (const { e, measure } of notes) {
       let newPage = false;
@@ -158,6 +159,13 @@ export function applyOctaveLines(score: Score, pageStarts: number[] = [0]): void
         last.ottavaEnd = true;
         open = undefined;
       }
+      // a line that ends with one page and starts again with the next is one line
+      if (newPage && !open && closed && e.ottava === closed.value) {
+        delete closed.e.ottavaEnd;
+        delete e.ottava;
+        open = closed.value;
+      }
+      closed = undefined;
       if (e.ottava) {
         if (open) delete e.ottava;
         else open = e.ottava;
@@ -169,6 +177,7 @@ export function applyOctaveLines(score: Score, pageStarts: number[] = [0]): void
       }
       if (e.ottavaEnd) {
         if (!open) delete e.ottavaEnd;
+        else closed = { e, value: open };
         open = undefined;
       }
     }

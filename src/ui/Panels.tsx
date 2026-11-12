@@ -316,7 +316,7 @@ export function SettingsPanel({ settings, onChange, onClose, serverKey, audiveri
         </p>
       )}
       {settings.engine === 'local' && (
-        <label className="check"><input type="checkbox" checked={settings.localExtras} onChange={(e) => onChange({ ...settings, localExtras: e.target.checked })} /> Add the title, tempo, chord symbols and lyrics with an AI model</label>
+        <label className="check"><input type="checkbox" checked={settings.localExtras} onChange={(e) => onChange({ ...settings, localExtras: e.target.checked })} /> Add the title, tempo, chord symbols, lyrics and expression marks with an AI model</label>
       )}
       {settings.engine === 'local' && settings.localExtras && (
         <>
@@ -324,6 +324,7 @@ export function SettingsPanel({ settings, onChange, onClose, serverKey, audiveri
             <label className="check"><input type="checkbox" checked={settings.extrasInfo} onChange={(e) => onChange({ ...settings, extrasInfo: e.target.checked })} /> Title, composer and tempo</label>
             <label className="check"><input type="checkbox" checked={settings.extrasChords} onChange={(e) => onChange({ ...settings, extrasChords: e.target.checked })} /> Chord symbols</label>
             <label className="check"><input type="checkbox" checked={settings.extrasLyrics} onChange={(e) => onChange({ ...settings, extrasLyrics: e.target.checked })} /> Lyrics</label>
+            <label className="check"><input type="checkbox" checked={settings.extrasMarks} onChange={(e) => onChange({ ...settings, extrasMarks: e.target.checked })} /> Crescendo and diminuendo hairpins, 8va lines and tremolos</label>
           </div>
           <p className="hint">For this the photo is sent to the service below, with your key. It costs roughly 5–15 cents a page with the default model. Without a key, only the notes are read.</p>
         </>

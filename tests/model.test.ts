@@ -228,14 +228,14 @@ describe('title, chords and lyrics from an AI model', () => {
       const score = page();
       const extras = await readExtras({ baseUrl: 'https://example.test/v1', apiKey: 'k', model: 'some/model' }, { data: 'AAAA', mediaType: 'image/jpeg' } as never, score);
       const prompt = JSON.stringify(sent!.messages[1].content);
-      expect(prompt).toContain('1: D5/q. C5/8 Bb4/h~   [3 sung notes]');
+      expect(prompt).toContain('1: 1:D5/q. 2:C5/8 3:Bb4/h~   [3 sung notes]');
       const summary = applyExtras(score, extras);
       expect(score.title).toBe('I Wish I Knew');
       expect(score.tempo).toBe(96);
       expect(score.measures[0].chords).toEqual([{ beat: 1, text: 'Bb' }, { beat: 3, text: 'D7/F#' }]);
       expect(voiceToString(score.measures[0].staves[0].voices[0])).toBe('D5/q."Sing" C5/8"a" Bb4/h~"song"');
       expect(voiceToString(score.measures[1].staves[0].voices[0])).toBe('Bb4/q r/q F4/8"of" G4/8"six-" A4/q');
-      expect(summary).toEqual({ chords: 2, lyrics: 5, uneven: [1] });
+      expect(summary).toEqual({ chords: 2, lyrics: 5, marks: 0, uneven: [1] });
       const chordsOnly = page();
       expect(applyExtras(chordsOnly, extras, { info: false, chords: true, lyrics: false })).toEqual({ chords: 2, lyrics: 0, uneven: [] });
       expect(chordsOnly.title).toBe('Untitled');

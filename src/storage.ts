@@ -75,6 +75,8 @@ export interface Settings {
   extrasInfo: boolean;
   extrasChords: boolean;
   extrasLyrics: boolean;
+  /** hairpins, octave lines and tremolo slashes */
+  extrasMarks: boolean;
   /** Draw chord symbols / lyrics on the score. */
   showChords: boolean;
   showLyrics: boolean;
@@ -98,6 +100,7 @@ export const DEFAULT_SETTINGS: Settings = {
   extrasInfo: true,
   extrasChords: true,
   extrasLyrics: true,
+  extrasMarks: true,
   showChords: true,
   showLyrics: true,
   compatPreset: 'openrouter',
