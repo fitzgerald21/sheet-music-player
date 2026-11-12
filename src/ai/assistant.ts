@@ -92,11 +92,12 @@ Reply with one JSON object and nothing else, in this compact form:
 - Write the entries in measure order and keep going to the last measure. Do not explain your choices.
 
 How to choose:
-- Read the harmony from the bass and from the notes that fall on the beats; treat passing and neighbour notes as decoration.
+- Read the harmony from the bass and from the notes that fall on the beats; treat a single passing or neighbour note as decoration.
+- A short chord is still a chord. When the bass and the notes above it move together to a different harmony – even for one eighth note, between beats, or as a pickup at the end of a measure – write that chord at its own beat (E/G#@1 Eb/G@2.5 D/F#@3). This is common where chords slide by half steps.
 - Name each chord from the notes that are actually there, no more and no fewer. When the seventh (or sixth, or ninth) sounds in the accompaniment or on a beat, write it: A7, D9, E6. Leave it out only when that note merely passes through in the melody. Check major against minor from the third that sounds, with the key signature applied. Do not write a diminished or altered chord unless its defining notes sound.
 - Name the chord from its bass note when the bass is a chord tone other than the root or sits under the chord: E6 rather than C#m/E over an E bass, Em/A when an Em chord sits over an A bass.
 - Prefer the name a player expects in this key: Eb/F rather than F7sus4 when the bass moves under a held chord, F2 or Fadd9 rather than Am7 over an F bass.
-- Put a symbol where the harmony changes, usually one to three per measure. Do not repeat a chord that has not changed, except at the start of a measure.
+- Put a symbol where the harmony changes: often one or two per measure, more when the chords really do change faster. Do not repeat a chord that has not changed, except at the start of a measure.
 - Write flats as "b" and sharps as "#": Bb, F#m7, Eb/F, Edim, F7sus4, Cmaj7, Gm/C.`;
 
 const systemPrompt = (mode: AssistantMode) => mode === 'chords' ? CHORDS_PROMPT : `You are the editing assistant inside a sheet-music app. The user's score is given to you as text. The user asks for a change in everyday words; you work out exactly what to change and return the changed measures.
