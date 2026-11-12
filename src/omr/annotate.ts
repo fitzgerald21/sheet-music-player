@@ -60,7 +60,7 @@ Reply with one JSON object and nothing else:
 - title, composer, lyricist: as printed on this page, "" if not printed. Title in normal capitalisation.
 - tempo: the metronome mark in quarter notes per minute, 0 if none is printed. If only a word is printed (Moderately, Allegro, Slowly…), give your best estimate in quarter notes per minute.
 - measures: one entry for every measure given to you, with the same number "m".
-- chords: the chord symbols printed above that measure, in order. "beat" is where the symbol sits, 1-based, in units of the time signature's lower number (1.5 = the second eighth note in 4/4). Write flats as "b" and sharps as "#": "Eb", "Bb7/F", "Edim", "F7sus4", "Gm", "F/A". Ignore guitar chord diagrams and fingering numbers. [] if none.
+- chords: the chord symbols printed above that measure, in order. "beat" is where the symbol sits, 1-based, in units of the time signature's lower number (1.5 = the second eighth note in 4/4). In 6/8, 9/8 and 12/8 the unit is the eighth note, so the dotted-quarter pulses fall on beats 1, 4, 7 and 10 – a symbol over the second pulse is beat 4, not beat 2. Write flats as "b" and sharps as "#": "Eb", "Bb7/F", "Edim", "F7sus4", "Gm", "F/A". Ignore guitar chord diagrams and fingering numbers. [] if none.
 - lyrics: the first verse only. Give exactly one string for every sung note of the measure – the list tells you how many. A note that starts a tie counts once; the note it is tied to is not counted. Use the syllable printed under that note; end it with "-" when the word continues on a later note ("ev-", "ry"); use "" for a note with no syllable of its own (a syllable held over several notes). [] for every measure if the music has no lyrics.
 ${[!want.info && '- Do not read the title, composer, lyricist or tempo: leave them "" and 0.', !want.chords && '- Do not read chord symbols: give [] for "chords" in every measure.', !want.lyrics && '- Do not read lyrics: give [] for "lyrics" in every measure.'].filter(Boolean).map((l) => l + '\n').join('')}- Never invent text that is not printed. If you cannot find a measure in the photo, give it empty chords and lyrics.`;
 
@@ -158,12 +158,20 @@ export function applyExtras(score: Score, raw: PageExtras, want: ExtrasWanted = 
   const slots = lyricSlots(score);
   let time = score.time;
   const times = score.measures.map((m) => (time = m.time ?? time));
+  // In 6/8, 9/8 and 12/8 models often count the dotted-quarter pulses (1 2 3 4) instead of eighth
+  // notes (1 4 7 10). If no symbol on the page lies beyond the number of pulses, that is what happened.
+  const compound = (t: [number, number]) => t[1] === 8 && t[0] >= 6 && t[0] % 3 === 0;
+  const listed = extras.measures.filter((em) => score.measures[em.m - 1] && compound(times[em.m - 1]));
+  const inPulses =
+    listed.some((em) => em.chords.length > 1) && listed.every((em) => em.chords.every((c) => c.beat < times[em.m - 1][0] / 3 + 1));
   for (const em of extras.measures) {
     const i = em.m - 1;
     const measure = score.measures[i];
     if (!measure) continue;
     const beats = times[i][0];
+    const spread = inPulses && compound(times[i]);
     const chords = em.chords
+      .map((c) => (spread ? { ...c, beat: (c.beat - 1) * 3 + 1 } : c))
       .map((c) => ({ beat: Math.min(Math.max(1, Math.round(c.beat * 4) / 4), Math.max(1, beats + 0.75)), text: c.symbol.replace(/♭/g, 'b').replace(/♯/g, '#') }))
       .sort((a, b) => a.beat - b.beat);
     if (chords.length) {

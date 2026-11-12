@@ -115,6 +115,34 @@ export function cleanScanXml(xml: string): { xml: string; summary: CleanSummary 
     summary.measures = drop.length;
   }
 
+  // 2b. changes of key or time in the middle of a page that do not last. A real change stays for a
+  // while; one that is gone again within two measures, or appears in the last two measures of the
+  // page, is a misread. A time "change" to another way of writing the same length is dropped too.
+  for (const p of parts) {
+    const ms = kids(p, 'measure');
+    const attr = (m: Element, tag: string) => kids(m, 'attributes').flatMap((a) => kids(a, tag))[0];
+    let key = num(attr(ms[0], 'key'), 'fifths');
+    let time = [num(attr(ms[0], 'time'), 'beats'), num(attr(ms[0], 'time'), 'beat-type')];
+    for (let i = 1; i < ms.length; i++) {
+      const k = attr(ms[i], 'key');
+      if (k) {
+        const next = num(k, 'fifths');
+        const later = ms.slice(i + 1, i + 3).map((m) => attr(m, 'key')).find(Boolean);
+        const reverts = later && num(later, 'fifths') === key;
+        if (next === key || reverts || i >= ms.length - 2) {
+          k.remove();
+          if (reverts) later!.remove();
+        } else key = next;
+      }
+      const t = attr(ms[i], 'time');
+      if (t) {
+        const next = [num(t, 'beats'), num(t, 'beat-type')];
+        if (next[0] / next[1] === time[0] / time[1]) t.remove();
+        else time = next;
+      }
+    }
+  }
+
   // 3. a time signature that most measures do not fit
   const lengths = parts.map(measureInfo);
   const main = lengths.map((l, k) => ({ l, k })).sort((a, b) => b.l.length - a.l.length)[0];
