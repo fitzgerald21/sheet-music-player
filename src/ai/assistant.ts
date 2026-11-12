@@ -4,7 +4,6 @@
 import { CompatConfig, extractJson } from '../omr/openaiCompat';
 import { DEFAULT_EXTRAS_MODEL } from '../omr/annotate';
 import type { Settings } from '../storage';
-import { detectChords } from '../model/chordDetect';
 import { emptyMeasureLike } from '../model/edit';
 import { fitMeasure, fullRest, measureLengths, timeAt } from '../model/fix';
 import { keyName } from '../model/pitch';
@@ -102,7 +101,7 @@ Rules:
 - Write chord symbols with "b" and "#": Bb, F#m7, Eb/F, Edim, F7sus4, Cmaj7, Gm/C.
 ${
   mode === 'chords'
-    ? `- For this task return only "chords" for the measures (no "staves"), for every measure that has notes. Read the harmony from the bass and the notes that fall on the beats; treat passing and neighbour notes as decoration. Prefer the name a player expects in this key (Eb/F rather than F7sus4 when the bass moves under a held chord; F2 or Fadd9 rather than Am7 over an F bass). Put a symbol where the harmony changes, usually one to three per measure; do not repeat a chord that has not changed. A simple automatic detector's guesses are included as a starting point – they are often right on plain chords and wrong on inversions and added-note chords.`
+    ? `- For this task return only "chords" for the measures (no "staves"), for every measure that has notes. Read the harmony from the bass and the notes that fall on the beats; treat passing and neighbour notes as decoration. Prefer the name a player expects in this key (Eb/F rather than F7sus4 when the bass moves under a held chord; F2 or Fadd9 rather than Am7 over an F bass). Put a symbol where the harmony changes, usually one to three per measure; do not repeat a chord that has not changed. Name each chord from the notes that are actually there: do not write a seventh, a diminished or an altered chord unless its defining notes sound, and prefer the plain triad when a note is only passing through.`
     : '- You cannot hear or see the printed page; work only from the text of the score.'
 }`;
 
@@ -212,11 +211,6 @@ export function describeScore(score: Score, measures: number[]): string {
 export function buildRequest(score: Score, text: string, marks: Mark[], mode: AssistantMode): string {
   const names = staffNames(score);
   const parts = [describeScore(score, measuresToSend(score, text, marks)), ''];
-  if (mode === 'chords') {
-    const guess = detectChords(score, { granularity: 'auto', overwrite: true }).score;
-    parts.push('The automatic detector guessed:');
-    parts.push(guess.measures.map((m, i) => `m${i + 1}: ${(m.chords ?? []).map((c) => `${c.text}@${c.beat}`).join(' ') || '-'}`).join('\n'), '');
-  }
   const said = marks.map((mk) => describeMark(score, mk, names)?.forModel).filter(Boolean);
   if (said.length) parts.push(`The user highlighted: ${said.join('; ')}.`, '');
   parts.push(`Request: ${text.trim()}`);

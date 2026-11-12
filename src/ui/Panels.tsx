@@ -468,7 +468,7 @@ export function ChordsPanel({ score, onApply, onClose, playChords, setPlayChords
       </div>
       <h3 className="sub-h">With AI</h3>
       <p className="hint">
-        An AI model reads the notes together with the detector’s guesses and writes the chords a musician would. It is better at slash chords,
+        An AI model reads the notes and writes the chords a musician would, without looking at the detector’s guesses. It is better at slash chords,
         added-note chords and quick changes. {ai ? 'The notes of the score are sent to the AI service set in Settings.' : 'Needs an AI key – add one in Settings.'}
       </p>
       {error && <p className="hint" role="alert" style={{ color: 'var(--danger)' }}>{error}</p>}
