@@ -433,7 +433,8 @@ export function ChordsPanel({ score, onApply, onClose, playChords, setPlayChords
       if (res.unchanged) setError(answer.reply || 'The AI model did not suggest any chord symbols.');
       else {
         const n = res.changed.reduce((a, i) => a + (res.score.measures[i].chords?.length ?? 0), 0);
-        onApply(res.score, `Wrote ${n} chord symbol${n === 1 ? '' : 's'} – check them by ear`);
+        const last = Math.max(...answer.measures.map((m) => m.m));
+        onApply(res.score, answer.cutOff ? `The answer was cut off after measure ${last}. Untick “Replace” and run it again for the rest.` : `Wrote ${n} chord symbol${n === 1 ? '' : 's'} – check them by ear`);
         onClose();
       }
     } catch (e) {

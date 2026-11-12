@@ -149,6 +149,30 @@ describe('asking the assistant', () => {
   });
 });
 
+describe('writing chords with the assistant', () => {
+  afterEach(() => vi.unstubAllGlobals());
+  const cfg = { baseUrl: 'https://ai.test/v1', apiKey: 'k', model: 'm' };
+  const reply = (content: string, finish = 'stop') => new Response(JSON.stringify({ choices: [{ message: { content }, finish_reason: finish }] }));
+
+  it('reads the compact answer', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => reply('{"chords":{"1":"C@1 F/C@3","2":"","3":"G7@1"},"reply":""}')));
+    const a = await askAssistant(cfg, song(), 'x', [], { mode: 'chords' });
+    const res = applyAnswer(song(), a, 'chords');
+    expect(res.score.measures.map((m) => m.chords ?? [])).toEqual([[{ beat: 1, text: 'C' }, { beat: 3, text: 'F/C' }], [], [{ beat: 1, text: 'G7' }]]);
+  });
+
+  it('keeps what arrived when the answer is cut off, and says so', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => reply('{"chords":{"1":"C@1","2":"Am@1 F@3","3":"G', 'length')));
+    const a = await askAssistant(cfg, song(), 'x', [], { mode: 'chords' });
+    expect(a.cutOff).toBe(true);
+    expect(a.measures.map((m) => m.m)).toEqual([1, 2]);
+    vi.stubGlobal('fetch', vi.fn(async () => reply('', 'length')));
+    await expect(askAssistant(cfg, song(), 'x', [], { mode: 'chords' })).rejects.toThrow(/thinking/);
+    vi.stubGlobal('fetch', vi.fn(async () => reply('{"reply":"I changed', 'length')));
+    await expect(askAssistant(cfg, song(), 'x', [])).rejects.toThrow(/cut off/);
+  });
+});
+
 describe('where chord symbols are written', () => {
   it('puts each symbol at the note it belongs to and keeps the exact beat in the file', async () => {
     const { toMusicXML } = await import('../src/model/musicxml');

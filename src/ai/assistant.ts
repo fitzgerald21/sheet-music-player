@@ -34,6 +34,8 @@ export interface AssistantAnswer {
   delete: number[];
   score: { title?: string; composer?: string; lyricist?: string; tempo?: number };
   transpose: number;
+  /** the answer ran out of room; what arrived is in `measures` */
+  cutOff?: boolean;
 }
 
 export interface ApplyResult {
@@ -75,11 +77,28 @@ const NOTATION = `Notation for one voice of one measure – tokens separated by 
 - g: in front makes a grace note: g:D5/8
 Every voice must add up to exactly the length of its measure.`;
 
-const systemPrompt = (mode: AssistantMode) => `You are the editing assistant inside a sheet-music app. The user's score is given to you as text. ${
-  mode === 'chords'
-    ? 'Your job now is to write the chord symbols for it, the way an experienced musician would pencil them above the staff.'
-    : 'The user asks for a change in everyday words; you work out exactly what to change and return the changed measures.'
-}
+const CHORDS_PROMPT = `You write the chord symbols for a piece of sheet music, the way an experienced musician would pencil them above the staff. The score is given to you as text.
+
+${NOTATION}
+
+How the score is listed: one block per measure, "m12" is measure 12. Each staff line is "S1 treble:", "S2 bass:" and so on, counted from the top; voices on one staff are separated by " | ".
+
+Reply with one JSON object and nothing else, in this compact form:
+{"chords":{"1":"Bm7@1","2":"G#dim@1 C#/E#@4.5","3":"Bm7@1"},"reply":""}
+
+- "chords" has one entry per measure that has notes; the key is the measure number. The value lists the symbols of that measure in order, each as symbol@beat, separated by spaces. beat is 1-based in units of the time signature's lower number: in 4/4 beat 3 is the third quarter and 2.5 the "and" of 2; in 6/8, 9/8 and 12/8 the dotted-quarter pulses are beats 1, 4, 7 and 10.
+- Use "" for a measure that should have no symbol (rests, or only passing notes).
+- "reply": leave it "" unless something about the score stopped you from doing the job.
+- Write the entries in measure order and keep going to the last measure. Do not explain your choices.
+
+How to choose:
+- Read the harmony from the bass and from the notes that fall on the beats; treat passing and neighbour notes as decoration.
+- Name each chord from the notes that are actually there. Do not write a seventh, a diminished or an altered chord unless its defining notes sound, and prefer the plain triad when a note is only passing through.
+- Prefer the name a player expects in this key: Eb/F rather than F7sus4 when the bass moves under a held chord, F2 or Fadd9 rather than Am7 over an F bass.
+- Put a symbol where the harmony changes, usually one to three per measure. Do not repeat a chord that has not changed, except at the start of a measure.
+- Write flats as "b" and sharps as "#": Bb, F#m7, Eb/F, Edim, F7sus4, Cmaj7, Gm/C.`;
+
+const systemPrompt = (mode: AssistantMode) => mode === 'chords' ? CHORDS_PROMPT : `You are the editing assistant inside a sheet-music app. The user's score is given to you as text. The user asks for a change in everyday words; you work out exactly what to change and return the changed measures.
 
 ${NOTATION}
 
@@ -99,11 +118,7 @@ Rules:
 - When the user highlighted something, the request is about that unless their words say otherwise. A highlighted note is identified by its measure, staff, voice and position.
 - "The C at the beginning of measure 25 in the treble clef" means the first C in the top staff of m25. If there are several equally likely candidates and nothing is highlighted, ask.
 - Write chord symbols with "b" and "#": Bb, F#m7, Eb/F, Edim, F7sus4, Cmaj7, Gm/C.
-${
-  mode === 'chords'
-    ? `- For this task return only "chords" for the measures (no "staves"), for every measure that has notes. Read the harmony from the bass and the notes that fall on the beats; treat passing and neighbour notes as decoration. Prefer the name a player expects in this key (Eb/F rather than F7sus4 when the bass moves under a held chord; F2 or Fadd9 rather than Am7 over an F bass). Put a symbol where the harmony changes, usually one to three per measure; do not repeat a chord that has not changed. Name each chord from the notes that are actually there: do not write a seventh, a diminished or an altered chord unless its defining notes sound, and prefer the plain triad when a note is only passing through.`
-    : '- You cannot hear or see the printed page; work only from the text of the score.'
-}`;
+- You cannot hear or see the printed page; work only from the text of the score.`;
 
 // ---------------------------------------------------------------- describing the score
 
@@ -222,6 +237,26 @@ export function buildRequest(score: Score, text: string, marks: Mark[], mode: As
 
 export class AssistantError extends Error {}
 
+/** "Bm7@1 D/F#@3.5" -> [{beat: 1, symbol: "Bm7"}, {beat: 3.5, symbol: "D/F#"}] */
+function compactChords(value: unknown): { beat: number; symbol: string }[] {
+  if (Array.isArray(value)) return value.map((x) => ({ beat: Number(x?.beat) || 1, symbol: String(x?.symbol ?? x?.text ?? '') }));
+  return String(value ?? '')
+    .split(/[\s,;]+/)
+    .filter(Boolean)
+    .map((t) => {
+      const at = t.lastIndexOf('@');
+      return at > 0 ? { symbol: t.slice(0, at), beat: Number(t.slice(at + 1)) || 1 } : { symbol: t, beat: 1 };
+    });
+}
+
+/** The measures of a chord answer that arrived before it was cut off. */
+function salvageChords(content: string): AssistantAnswer | null {
+  const found: Record<string, string> = {};
+  const re = /"(\d+)"\s*:\s*"([^"]*)"/g;
+  for (let m = re.exec(content); m; m = re.exec(content)) found[m[1]] = m[2];
+  return Object.keys(found).length ? { ...normalise({ chords: found }), cutOff: true } : null;
+}
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 function normalise(raw: unknown): AssistantAnswer {
   const r = (raw ?? {}) as Record<string, any>;
@@ -230,6 +265,9 @@ function normalise(raw: unknown): AssistantAnswer {
   const chords = (c: unknown) =>
     Array.isArray(c) ? c.map((x: any) => ({ beat: Number(x?.beat) || 1, symbol: String(x?.symbol ?? x?.text ?? '').trim() })).filter((x: { symbol: string }) => x.symbol) : undefined;
   const sc = (r.score ?? {}) as Record<string, any>;
+  // compact form used when writing chords: {"chords": {"1": "Bm7@1 D@3", ...}}
+  if (r.chords && typeof r.chords === 'object' && !Array.isArray(r.chords) && !Array.isArray(r.measures))
+    r.measures = Object.entries(r.chords).map(([m, v]) => ({ m: Number(m), chords: compactChords(v) }));
   return {
     reply: String(r.reply ?? '').trim(),
     measures: (Array.isArray(r.measures) ? r.measures : [])
@@ -286,8 +324,13 @@ export async function askAssistant(cfg: CompatConfig, score: Score, text: string
   if (!res.ok) throw new AssistantError(`AI service error ${res.status}: ${(await res.text()).slice(0, 200)}`);
   const data = await res.json();
   if (data?.error?.message) throw new AssistantError(`AI service error: ${String(data.error.message).slice(0, 200)}`);
-  if (data?.choices?.[0]?.finish_reason === 'length') throw new AssistantError('The answer was cut off. Ask for a smaller change, or highlight the measures it is about.');
   const content: string = data?.choices?.[0]?.message?.content ?? '';
+  if (data?.choices?.[0]?.finish_reason === 'length') {
+    const part = mode === 'chords' ? salvageChords(content) : null;
+    if (part) return part;
+    if (!content.trim()) throw new AssistantError('The model used up its whole answer thinking and wrote nothing. Try again, or use a model without extended thinking.');
+    throw new AssistantError(mode === 'chords' ? 'The answer was cut off before any chords arrived. Try again.' : 'The answer was cut off. Ask for a smaller change, or highlight the measures it is about.');
+  }
   try {
     return normalise(extractJson(content));
   } catch {
