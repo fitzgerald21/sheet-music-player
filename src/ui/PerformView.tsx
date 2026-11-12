@@ -253,6 +253,7 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
     const muted = accompany ? userStaves : Array.from({ length: staffInfo.total }, (_, i) => i);
     const plan = buildPlan(score, { humanize: settings.humanize, mutedStaves: muted });
     engine.onEnd = () => stopAll();
+    engine.onStall = () => stopAll();
     engine.play(plan, startTime, { speed, metronome, countIn, loop: false }, []);
     setRunning(true);
   }, [ensureAudio, accompany, userStaves, staffInfo.total, score, settings.humanize, startTime, speed, metronome, countIn, stopAll]);
@@ -441,7 +442,7 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
 
   const onScreenKey = useCallback((midi: number, down: boolean) => {
     if (down) {
-      void engine.init().then(() => engine.preview([midi]));
+      void engine.init().then(() => engine.preview([midi])).catch(() => undefined);
       midiIn.emit('on', midi);
     } else if (midiIn.held.has(midi)) midiIn.emit('off', midi);
   }, []);

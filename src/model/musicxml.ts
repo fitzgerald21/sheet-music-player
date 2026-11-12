@@ -124,26 +124,51 @@ export function toMusicXML(score: Score, opts: XmlOptions = {}): XmlExport {
         if (m.segno) out.push('<direction placement="above"><direction-type><segno/></direction-type><sound segno="segno"/></direction>');
         if (m.coda) out.push('<direction placement="above"><direction-type><coda/></direction-type><sound coda="coda"/></direction>');
         if (m.text) out.push(`<direction placement="above"><direction-type><words font-style="italic">${esc(m.text)}</words></direction-type></direction>`);
-        // chord symbols
-        for (const c of [...(m.chords ?? [])].sort((a, b) => a.beat - b.beat)) {
+      }
+
+      // Chord symbols are written just before the note they sit above. Where no note starts at that
+      // exact spot, the file keeps the true position as an offset; the drawing (which ignores offsets)
+      // uses the nearest note instead.
+      const harmonyAt = new Map<string, string[]>();
+      if (vpIdx === 0 && m.chords?.length) {
+        const top = m.staves[partOffsets[pi]]?.voices ?? [];
+        const onsets: { vi: number; ei: number; tick: number }[] = [];
+        top.forEach((voice, vi) => {
+          let tick = 0;
+          voice.forEach((e, ei) => {
+            if (!e.grace) onsets.push({ vi, ei, tick });
+            tick += eventTicks(e, len);
+          });
+        });
+        const main = onsets.filter((o) => o.vi === 0);
+        const placed = new Map<string, { texts: string[]; xml: string[] }>();
+        for (const c of [...m.chords].sort((x, y) => x.beat - y.beat)) {
           const pc = parseChord(c.text);
-          const offset = Math.max(0, Math.round(((c.beat - 1) * 4 * TPQ) / times[mi][1]));
-          if (!pc) continue;
-          if (opts.chordText) {
-            const pretty = prettyChord(c.text);
-            out.push(
-              `<harmony print-frame="no"><numeral><numeral-root text="${esc(pretty)}">1</numeral-root></numeral><kind>major</kind>${offset > 0 ? `<offset>${offset}</offset>` : ''}</harmony>`,
+          if (!pc || !main.length) continue;
+          const tick = Math.max(0, Math.round(((c.beat - 1) * 4 * TPQ) / times[mi][1]));
+          const exact = onsets.find((o) => o.tick === tick);
+          const before = [...main].reverse().find((o) => o.tick <= tick) ?? main[0];
+          const nearest = main.reduce((best, o) => (Math.abs(o.tick - tick) < Math.abs(best.tick - tick) ? o : best), before);
+          const at = exact ?? (opts.chordText ? nearest : before);
+          const key = `${at.vi}|${at.ei}`;
+          const slot = placed.get(key) ?? { texts: [], xml: [] };
+          placed.set(key, slot);
+          const offset = tick - at.tick;
+          if (opts.chordText) slot.texts.push(prettyChord(c.text));
+          else {
+            const kind = musicXmlKind(pc.quality);
+            slot.xml.push(
+              `<harmony print-frame="no"><root><root-step>${pc.root}</root-step>${pc.rootAlter ? `<root-alter>${pc.rootAlter}</root-alter>` : ''}</root>` +
+                `<kind text="${esc(pc.quality)}">${kind === 'other' ? 'major' : kind}</kind>` +
+                (pc.bass ? `<bass><bass-step>${pc.bass}</bass-step>${pc.bassAlter ? `<bass-alter>${pc.bassAlter}</bass-alter>` : ''}</bass>` : '') +
+                `${offset ? `<offset>${offset}</offset>` : ''}</harmony>`,
             );
-            continue;
           }
-          const kind = musicXmlKind(pc.quality);
-          const offXml = offset > 0 ? `<offset>${offset}</offset>` : '';
-          out.push(
-            `<harmony print-frame="no"><root><root-step>${pc.root}</root-step>${pc.rootAlter ? `<root-alter>${pc.rootAlter}</root-alter>` : ''}</root>` +
-              `<kind text="${esc(pc.quality)}">${kind === 'other' ? 'major' : kind}</kind>` +
-              (pc.bass ? `<bass><bass-step>${pc.bass}</bass-step>${pc.bassAlter ? `<bass-alter>${pc.bassAlter}</bass-alter>` : ''}</bass>` : '') +
-              `${offXml}</harmony>`,
-          );
+        }
+        for (const [key, slot] of placed) {
+          // two symbols over one note are drawn side by side as one label
+          if (slot.texts.length) slot.xml.push(`<harmony print-frame="no"><numeral><numeral-root text="${esc(slot.texts.join('  '))}">1</numeral-root></numeral><kind>major</kind></harmony>`);
+          harmonyAt.set(key, slot.xml);
         }
       }
 
@@ -173,6 +198,7 @@ export function toMusicXML(score: Score, opts: XmlOptions = {}): XmlExport {
               graceIdx = 0;
               eventKeys.set(`${mi}|${vStaff}|${vnum}|${tick}`, e.id);
             }
+            if (si === 0) for (const h of harmonyAt.get(`${vi}|${ei}`) ?? []) out.push(h);
             // dynamics
             if (e.dynamic) {
               out.push(

@@ -212,9 +212,49 @@ class Engine {
   onEnd: (() => void) | null = null;
   pianoLoaded: Promise<void> = Promise.resolve();
 
+  /** Called when the sound output stops responding during playback (e.g. after a phone call or the camera). */
+  onStall: (() => void) | null = null;
+  /** When sound was last sent out, to know whether the output may have gone to sleep. */
+  private lastSound = 0;
+  private stallSince = 0;
+  private checkedAt = 0;
+  private stallClock = -1;
+  private stallNudged = false;
+
+  /**
+   * Makes sure the audio clock is really running. On iPhones the audio can be "interrupted" by the
+   * camera, a call or locking the screen; it then reports itself as started while standing still.
+   */
+  private async wake(): Promise<boolean> {
+    const ctx = Tone.getContext().rawContext as unknown as AudioContext;
+    const pause = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const moving = async () => {
+      const t = ctx.currentTime;
+      await pause(70);
+      return ctx.currentTime > t;
+    };
+    const settle = (p: Promise<unknown>) => Promise.race([p.catch(() => undefined), pause(800)]);
+    if (ctx.state === 'running' && (await moving())) return true;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (ctx.state === 'running') await settle(ctx.suspend());
+      await settle(ctx.resume());
+      if (await moving()) return true;
+    }
+    return false;
+  }
+
   /** Must be called from a user gesture (iOS). */
   async init(): Promise<void> {
-    await Tone.start();
+    const ctx = Tone.getContext().rawContext as unknown as AudioContext;
+    const wasRunning = ctx.state === 'running';
+    // never wait forever on a resume that does not answer
+    await Promise.race([Tone.start().catch(() => undefined), new Promise((r) => setTimeout(r, 1500))]);
+    // the check takes a moment, so it is skipped while sound is flowing (tapping notes while editing)
+    if (!wasRunning || performance.now() - this.checkedAt > 4000) {
+      if (!(await this.wake())) throw new Error('AUDIO_ASLEEP');
+      this.checkedAt = performance.now();
+    }
+    if (!wasRunning) this.lastSound = 0;
     try {
       // Let iOS play audio even when the ringer switch is on silent.
       const nav = navigator as Navigator & { audioSession?: { type: string } };
@@ -282,7 +322,14 @@ class Engine {
     this.plan = plan;
     this.opts = opts;
     this.muted = muteParts;
-    const lead = 0.12;
+    // After silence the phone's speaker or Bluetooth link needs a moment to wake up, and whatever is
+    // played in that moment is lost. Give it a head start and something inaudible to wake up on.
+    const idle = performance.now() - this.lastSound > 2500;
+    const lead = idle ? 0.4 : 0.12;
+    if (idle) this.prime(lead);
+    this.lastSound = performance.now();
+    this.stallClock = -1;
+    this.stallNudged = false;
     let countInDur = 0;
     this.beatQueue = [];
     // metronome beats (score time)
@@ -296,7 +343,9 @@ class Engine {
     }
     this.scoreStart = from;
     this.ctxStart = Tone.now() + lead + countInDur / opts.speed;
-    this.noteIdx = plan.notes.findIndex((n) => n.time >= from - 0.001);
+    // notes are nudged a few milliseconds early or late for a human feel; one that lands just before
+    // the starting point still belongs to it
+    this.noteIdx = plan.notes.findIndex((n) => n.time >= from - 0.03);
     if (this.noteIdx < 0) this.noteIdx = plan.notes.length;
     this.beatIdx = this.beatQueue.findIndex((b) => b.time >= from - countInDur - 0.001);
     if (this.beatIdx < 0) this.beatIdx = this.beatQueue.length;
@@ -307,10 +356,51 @@ class Engine {
 
   private muted: boolean[] = [];
 
+  /** A sound too quiet to hear, so the output is awake when the first note arrives. */
+  private prime(seconds: number) {
+    try {
+      const ctx = Tone.getContext().rawContext as unknown as AudioContext;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      gain.gain.value = 0.0004;
+      osc.frequency.value = 220;
+      osc.connect(gain).connect(ctx.destination);
+      osc.start();
+      osc.stop(ctx.currentTime + seconds + 0.05);
+    } catch {
+      /* not essential */
+    }
+  }
+
+  /** True when the audio clock has stood still for too long; tries once to restart it first. */
+  private stalled(now: number): boolean {
+    const wall = performance.now();
+    if (now !== this.stallClock) {
+      this.stallClock = now;
+      this.stallSince = wall;
+      this.stallNudged = false;
+      return false;
+    }
+    const frozen = wall - this.stallSince;
+    if (frozen > 600 && !this.stallNudged) {
+      this.stallNudged = true;
+      void (Tone.getContext().rawContext as unknown as AudioContext).resume().catch(() => undefined);
+    }
+    return frozen > 2000;
+  }
+
   private tick() {
     const plan = this.plan;
     if (!plan || this.state !== 'playing') return;
     const now = Tone.now();
+    if (this.stalled(now)) {
+      this.pausedAt = this.position();
+      this.stopInternal(false);
+      this.state = 'paused';
+      this.onStall?.();
+      return;
+    }
+    this.lastSound = performance.now();
     const horizon = (now - this.ctxStart + 0.2) * this.opts.speed + this.scoreStart;
     while (this.noteIdx < plan.notes.length && plan.notes[this.noteIdx].time < horizon) {
       const n = plan.notes[this.noteIdx++];
@@ -395,4 +485,4 @@ class Engine {
 }
 
 export const engine = new Engine();
-if (import.meta.env?.DEV) (window as unknown as { __smpEngine: Engine }).__smpEngine = engine;
+if (import.meta.env?.DEV) Object.assign(window, { __smpEngine: engine, __smpTone: Tone });

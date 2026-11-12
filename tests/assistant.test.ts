@@ -145,3 +145,16 @@ describe('asking the assistant', () => {
     await expect(askAssistant({ ...cfg, apiKey: '' }, song(), 'x', [])).rejects.toThrow(/Add an AI key/);
   });
 });
+
+describe('where chord symbols are written', () => {
+  it('puts each symbol at the note it belongs to and keeps the exact beat in the file', async () => {
+    const { toMusicXML } = await import('../src/model/musicxml');
+    const s = make([[['C4/q D4/q E4/h'], ['C3/w']]]);
+    s.measures[0].chords = [{ beat: 1, text: 'C' }, { beat: 3, text: 'F/C' }, { beat: 4, text: 'G7' }];
+    const drawn = toMusicXML(s, { chordText: true }).xml.replace(/\n/g, '');
+    // third symbol has no note of its own, so it shares the label of the nearest one
+    expect(drawn).toMatch(/text="C".*<step>C<\/step>.*<step>D<\/step>.*text="F\/C {2}G7".*<step>E<\/step>/);
+    const file = toMusicXML(s).xml.replace(/\n/g, '');
+    expect(file).toMatch(/<root-step>C<\/root-step>.*<step>C<\/step>.*<step>D<\/step>.*<root-step>F<\/root-step>.*<root-step>G<\/root-step>.*<offset>96<\/offset>.*<step>E<\/step>/);
+  });
+});

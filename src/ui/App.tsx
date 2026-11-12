@@ -119,6 +119,10 @@ export function App() {
 
   const openScore = useCallback((s: Score) => {
     engine.stop();
+    planRef.current = null;
+    planScoreRef.current = null;
+    setProgress(0);
+    setPosLabel('0:00');
     setPlayState('stopped');
     store.replace(s);
     setSel(null);
@@ -150,6 +154,10 @@ export function App() {
       const plan = makePlan(s);
       planRef.current = plan;
       planScoreRef.current = s;
+      engine.onStall = () => {
+        setPlayState('paused');
+        flash('The sound was interrupted – tap play to continue.');
+      };
       engine.onEnd = () => {
         setPlayState('stopped');
         viewRef.current?.setPlaying(new Set(), null, false);
@@ -181,7 +189,7 @@ export function App() {
       await engine.ready();
     } catch (e) {
       console.error(e);
-      flash('Could not start audio.');
+      flash(e instanceof Error && e.message === 'AUDIO_ASLEEP' ? 'The sound did not wake up – tap play again.' : 'Could not start audio.');
       setLoadingAudio(false);
       return;
     } finally {
@@ -311,7 +319,7 @@ export function App() {
       const e = loc ? getEvent(next, loc) : null;
       if (e && !e.rest) {
         const part = next.parts[0];
-        void engine.init().then(() => engine.preview(e.pitches.map(midiOf), part?.instrument === 'voice' ? 'piano' : part?.instrument));
+        void engine.init().then(() => engine.preview(e.pitches.map(midiOf), part?.instrument === 'voice' ? 'piano' : part?.instrument)).catch(() => undefined);
       }
     }
   }, [score, store]);
@@ -534,7 +542,7 @@ export function App() {
       const e = loc ? getEvent(score, loc) : null;
       if (e && !e.rest && engine.state !== 'playing') {
         const midis = s.pitchIdx !== null && e.pitches[s.pitchIdx] ? [midiOf(e.pitches[s.pitchIdx])] : e.pitches.map(midiOf);
-        void engine.init().then(() => engine.preview(midis));
+        void engine.init().then(() => engine.preview(midis)).catch(() => undefined);
       }
     }
   }, [editMode, sel, playState, score, loop, startAt, assistOpen]);
