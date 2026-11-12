@@ -2,6 +2,7 @@ import { chordIntervals, parseChord } from './chords';
 import { TPQ, eventTicks, measureTicks } from './duration';
 import { measureLengths, timeAt } from './fix';
 import { STEP_SEMI, midiOf } from './pitch';
+import { hairpinSpans } from './spans';
 import { Dynamic, Score } from './types';
 
 /** Order in which measures are played, following repeats, voltas, D.C./D.S., Fine and Coda. */
@@ -126,9 +127,73 @@ export interface PlanOptions {
   range?: [number, number];
   humanize?: boolean;
   playChords?: boolean;
+  /** force swing on or off; by default it follows "Swing" / "Straight" in the measure texts */
   swing?: boolean;
+  /** false: a tremolo is one held note, not repeated strokes (for stepping through the notes to play) */
+  tremolo?: boolean;
   /** global staff indices whose notes are highlighted but not played (e.g. the hand you play yourself) */
   mutedStaves?: number[];
+}
+
+/**
+ * Whether eighth notes are swung in each measure. "Swing" in a measure's text turns it on from
+ * there; "Straight" (or "Even eighths") turns it off again.
+ */
+export function swingAt(score: Score): boolean[] {
+  let on = false;
+  return score.measures.map((m) => {
+    const text = (m.text ?? '').toLowerCase();
+    if (/straight|even (eighths|8ths)|no swing/.test(text)) on = false;
+    else if (/swing|shuffle/.test(text)) on = true;
+    return on;
+  });
+}
+
+/** In swing the eighth note off the beat is played late, as the last note of a triplet. */
+const swung = (tick: number) => (tick % TPQ === TPQ / 2 ? tick + TPQ / 6 : tick);
+
+/**
+ * How loud each part is at any point of the piece (ticks in written order). A dynamic mark sets the
+ * level; a hairpin moves it gradually to the next dynamic mark, or by one step if none follows.
+ */
+function loudness(score: Score, lens: number[], staffPart: number[]): (part: number, at: number) => number {
+  const marks: { at: number; level: number }[][] = score.parts.map(() => []);
+  let base = 0;
+  score.measures.forEach((m, mi) => {
+    m.staves.forEach((sm, si) =>
+      sm.voices.forEach((voice) => {
+        let tick = 0;
+        for (const e of voice) {
+          if (e.dynamic) marks[staffPart[si] ?? 0].push({ at: base + tick, level: DYN_VEL[e.dynamic] });
+          tick += eventTicks(e, lens[mi]);
+        }
+      }),
+    );
+    base += lens[mi];
+  });
+  for (const list of marks) list.sort((x, y) => x.at - y.at);
+  const ramps: { a: number; b: number; from: number; to: number }[][] = score.parts.map(() => []);
+  const level = (part: number, at: number): number => {
+    let mark = { at: -1, level: DYN_VEL.mf };
+    for (const k of marks[part]) {
+      if (k.at > at) break;
+      mark = k;
+    }
+    let ramp: { a: number; b: number; from: number; to: number } | undefined;
+    for (const r of ramps[part]) if (r.a <= at) ramp = r;
+    if (!ramp || ramp.b <= mark.at) return mark.level;
+    if (at >= ramp.b) return ramp.to;
+    return ramp.from + ((ramp.to - ramp.from) * (at - ramp.a)) / (ramp.b - ramp.a);
+  };
+  for (const h of hairpinSpans(score).sort((x, y) => x.a - y.a)) {
+    const part = staffPart[h.staff] ?? 0;
+    const from = level(part, h.a);
+    const up = h.value === 'cresc';
+    const goal = marks[part].find((k) => k.at > h.a && k.at <= h.b + 4 * TPQ && (up ? k.level > from : k.level < from));
+    const to = goal ? goal.level : Math.max(0.2, Math.min(0.95, from + (up ? 0.14 : -0.14)));
+    ramps[part].push({ a: h.a, b: goal ? Math.min(Math.max(h.b, h.a + 1), Math.max(goal.at, h.a + 1)) : h.b, from, to });
+  }
+  return level;
 }
 
 export function buildPlan(score: Score, opts: PlanOptions = {}): PlaybackPlan {
@@ -156,7 +221,10 @@ export function buildPlan(score: Score, opts: PlanOptions = {}): PlaybackPlan {
     tempoAt.push(tempo);
   }
   let t = 0;
-  const partDyn = score.parts.map(() => DYN_VEL.mf);
+  const level = loudness(score, lens, staffPart);
+  const swing = swingAt(score);
+  const measureStart: number[] = [];
+  lens.reduce((sum, l, i) => ((measureStart[i] = sum), sum + l), 0);
   // open ties: key staff|voice|midi -> note
   const openTies = new Map<string, PlayNote>();
   let rand = 12345;
@@ -182,6 +250,7 @@ export function buildPlan(score: Score, opts: PlanOptions = {}): PlaybackPlan {
       qpm: tempoAt[mi],
     });
     const stillOpen = new Set<string>();
+    const warp = (opts.swing ?? swing[mi]) && (unit === 4 || unit === 2) ? swung : (tick: number) => tick;
     m.staves.forEach((sm, si) => {
       const part = staffPart[si] ?? 0;
       sm.voices.forEach((voice, vi) => {
@@ -190,15 +259,14 @@ export function buildPlan(score: Score, opts: PlanOptions = {}): PlaybackPlan {
         const topVoice = vi === 0;
         voice.forEach((e, ei) => {
           const et = eventTicks(e, len);
-          if (e.dynamic) partDyn[part] = DYN_VEL[e.dynamic];
-          const start = t + tick * secPerTick;
-          let durSec = et * secPerTick;
+          const start = t + warp(tick) * secPerTick;
+          let durSec = (warp(tick + et) - warp(tick)) * secPerTick;
           if (e.grace) {
             durSec = Math.min(0.09, 0.25 * secPerTick * TPQ);
           }
           if (!e.rest) {
             spans.push({ time: e.grace ? start - durSec : start, end: e.grace ? start : start + durSec, eventId: e.id, measure: mi });
-            let vel = partDyn[part];
+            let vel = level(part, measureStart[mi] + tick);
             if (e.artic?.includes('accent')) vel += 0.14;
             if (e.artic?.includes('marcato')) vel += 0.2;
             if (e.dynamic === 'sfz') vel = 0.92;
@@ -223,6 +291,18 @@ export function buildPlan(score: Score, opts: PlanOptions = {}): PlaybackPlan {
                 open.dur = start + durSec * (p.tie ? 1 : lengthFactor) - open.time;
                 if (p.tie) stillOpen.add(key);
                 else openTies.delete(key);
+                continue;
+              }
+              if (e.tremolo && opts.tremolo !== false && !e.grace && !opts.mutedStaves?.includes(si)) {
+                // repeated strokes; a fast tremolo on a chord rocks between its lower and upper notes
+                const idx = e.pitches.indexOf(p);
+                const rock = e.tremolo === 3 && e.pitches.length > 1;
+                const strokeSec = Math.max(0.06, (TPQ / (e.tremolo === 1 ? 2 : e.tremolo === 2 ? 4 : 8)) * secPerTick);
+                const count = Math.max(2, Math.round(durSec / strokeSec));
+                const step = durSec / count;
+                const upper = rock && idx >= Math.ceil(e.pitches.length / 2) ? 1 : 0;
+                for (let k = upper; k < count; k += rock ? 2 : 1)
+                  notes.push({ time: start + k * step, dur: step * (rock ? 2 : 1.05), midi, velocity: vel * (k === 0 ? 1 : 0.82), part, eventId: e.id, staff: si });
                 continue;
               }
               const note: PlayNote = {
@@ -253,8 +333,8 @@ export function buildPlan(score: Score, opts: PlanOptions = {}): PlaybackPlan {
       sorted.forEach((c, ci) => {
         const pc = parseChord(c.text);
         if (!pc) return;
-        const startTick = ((c.beat - 1) * 4 * TPQ) / unit;
-        const endTick = ci + 1 < sorted.length ? ((sorted[ci + 1].beat - 1) * 4 * TPQ) / unit : len;
+        const startTick = warp(Math.round(((c.beat - 1) * 4 * TPQ) / unit));
+        const endTick = ci + 1 < sorted.length ? warp(Math.round(((sorted[ci + 1].beat - 1) * 4 * TPQ) / unit)) : len;
         const root = 48 + ((STEP_SEMI[pc.root] + pc.rootAlter + 12) % 12);
         const bass = pc.bass ? 36 + ((STEP_SEMI[pc.bass] + (pc.bassAlter ?? 0) + 12) % 12) : root - 12;
         const tones = [bass, ...chordIntervals(pc.quality).map((iv) => root + iv)];

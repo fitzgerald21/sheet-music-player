@@ -8,9 +8,11 @@
 //   dur     := w | h | q | 8 | 16 | 32 | 64, then "." per dot, then optional "t" (triplet)
 //   suffix  := "~" tie all | "(" slur start | ")" slur end | "@" word | '"' lyric '"'
 //   @words  := stacc acc ten marc ferm | ppp pp p mp mf f ff fff sfz fp
+//              trem trem2 trem3 (tremolo slashes) | cresc dim (hairpin opens) hpend (hairpin closes)
+//              8va 8vb 15ma 15mb (octave line starts) 8end (last note under the line)
 
 import { parsePitch, pitchToString } from './pitch';
-import { Articulation, DurType, Dynamic, DYNAMICS, NoteEvent, Pitch, newId } from './types';
+import { Articulation, DurType, Dynamic, DYNAMICS, NoteEvent, Ottava, Pitch, newId } from './types';
 
 const DUR_ALIASES: Record<string, DurType> = {
   w: 'w', '1': 'w', h: 'h', '2': 'h', q: 'q', '4': 'q', '8': '8', e: '8', '16': '16', s: '16', '32': '32', '64': '64',
@@ -23,6 +25,9 @@ const ARTIC_WORDS: Record<string, Articulation> = {
   marc: 'marcato', marcato: 'marcato',
   ferm: 'fermata', fermata: 'fermata',
 };
+
+const OTTAVA_WORDS: Record<string, Ottava> = { '8va': 8, '8vb': -8, '15ma': 15, '15mb': -15 };
+const OTTAVA_NAMES: Record<number, string> = { 8: '8va', '-8': '8vb', 15: '15ma', '-15': '15mb' };
 
 export function tokenize(voice: string): string[] {
   return voice.match(/(?:"[^"]*"|[^\s"])+/g) ?? [];
@@ -95,14 +100,14 @@ function applySuffix(ev: NoteEvent, tail: string): string | null {
       ev.slurEnd = true;
       i++;
     } else if (c === '@') {
-      const m = /^@([A-Za-z>]+)/.exec(tail.slice(i));
+      const m = /^@([A-Za-z0-9>]+)/.exec(tail.slice(i));
       if (!m) return 'bad @ marker';
       const w = m[1];
       if (ARTIC_WORDS[w.toLowerCase()]) {
         ev.artic = [...(ev.artic ?? []), ARTIC_WORDS[w.toLowerCase()]];
       } else if ((DYNAMICS as readonly string[]).includes(w)) {
         ev.dynamic = w as Dynamic;
-      } // unknown words are ignored
+      } else applyMark(ev, w.toLowerCase()); // unknown words are ignored
       i += m[0].length;
     } else if (c === '.' || c === ',' || c === ' ') {
       i++;
@@ -111,6 +116,16 @@ function applySuffix(ev: NoteEvent, tail: string): string | null {
     }
   }
   return null;
+}
+
+function applyMark(ev: NoteEvent, w: string) {
+  const trem = /^trem(?:olo)?([123])?$/.exec(w);
+  if (trem) ev.tremolo = (trem[1] ? +trem[1] : 3) as 1 | 2 | 3;
+  else if (w === 'cresc' || w === 'crescendo') ev.hairpin = 'cresc';
+  else if (w === 'dim' || w === 'decresc' || w === 'decrescendo' || w === 'diminuendo') ev.hairpin = 'dim';
+  else if (w === 'hpend') ev.hairpinEnd = true;
+  else if (OTTAVA_WORDS[w]) ev.ottava = OTTAVA_WORDS[w];
+  else if (w === '8end' || w === 'loco') ev.ottavaEnd = true;
 }
 
 export function parseVoice(voice: string): ParseResult {
@@ -142,6 +157,11 @@ export function eventToToken(e: NoteEvent): string {
   if (e.slurEnd) s += ')';
   for (const a of e.artic ?? []) s += '@' + { staccato: 'stacc', accent: 'acc', tenuto: 'ten', marcato: 'marc', fermata: 'ferm' }[a];
   if (e.dynamic) s += '@' + e.dynamic;
+  if (e.tremolo) s += '@trem' + (e.tremolo === 3 ? '' : e.tremolo);
+  if (e.hairpin) s += '@' + e.hairpin;
+  if (e.hairpinEnd) s += '@hpend';
+  if (e.ottava) s += '@' + OTTAVA_NAMES[e.ottava];
+  if (e.ottavaEnd) s += '@8end';
   if (e.lyric) s += `"${e.lyric}"`;
   return s;
 }

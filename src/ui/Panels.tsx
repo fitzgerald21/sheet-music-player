@@ -287,7 +287,7 @@ export function MeasurePanel({ score, m0, m1, onUpdate, onInsert, onDelete, onCl
         </div>
       </div>
       <div className="field">
-        <label htmlFor="mtext">Text (e.g. rit., a tempo)</label>
+        <label htmlFor="mtext">Text (e.g. rit., a tempo; “Swing” swings the eighth notes from here, “Straight” ends it)</label>
         <input id="mtext" value={m.text ?? ''} onChange={(e) => onUpdate(m0, { text: e.target.value || undefined })} />
       </div>
     </Sheet>

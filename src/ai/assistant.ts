@@ -73,6 +73,9 @@ const NOTATION = `Notation for one voice of one measure – tokens separated by 
 - a tie to the same pitch in the next note is "~". After the duration it ties every note of the chord (C4+E4+G4/h~). After a single pitch it ties only that pitch (C4~+E4~+G4/h ties C and E but not G).
 - "(" after a note starts a slur, ")" ends one.
 - @stacc @acc @ten @marc @ferm add an articulation, @pp @p @mp @mf @f @ff a dynamic: C4/q@stacc@mf
+- @trem on a note or chord draws tremolo slashes through its stem (@trem1 one slash, @trem2 two, @trem three).
+- @cresc or @dim opens a hairpin at that note and @hpend on a later note of the same staff closes it.
+- @8va (or @8vb, @15ma, @15mb) on a note starts an octave line over its staff and @8end marks the last note under it. Pitches are always written as they sound, also under such a line.
 - a lyric syllable goes in quotes right after the note: C4/q"Hal-" (end with "-" when the word continues).
 - g: in front makes a grace note: g:D5/8
 Every voice must add up to exactly the length of its measure.`;

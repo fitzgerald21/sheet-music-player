@@ -1,6 +1,7 @@
-import { fitScore, fullRest } from '../model/fix';
+import { fitScore, fullRest, measureLengths } from '../model/fix';
 import { parseVoice } from '../model/tokens';
-import { Clef, InstrumentId, Measure, Navigation, Part, Score, newId } from '../model/types';
+import { ottavaSemitones, staffEvents } from '../model/spans';
+import { Clef, InstrumentId, Measure, Navigation, NoteEvent, Part, Score, newId } from '../model/types';
 import { PageMeasure, PageTranscription } from './schema';
 
 export interface ConvertResult {
@@ -75,6 +76,7 @@ export function convertPages(pagesIn: PageTranscription[], opts: { reorder?: boo
   const score: Score = {
     id: newId('s'),
     title: withMeta.title || 'Untitled',
+    subtitle: withMeta.subtitle?.trim() || pages.find((p) => p.subtitle?.trim())?.subtitle?.trim() || undefined,
     composer: withMeta.composer || undefined,
     lyricist: withMeta.lyricist || undefined,
     arranger: withMeta.arranger || undefined,
@@ -90,7 +92,9 @@ export function convertPages(pagesIn: PageTranscription[], opts: { reorder?: boo
 
   let curTime = score.time.join('/');
   let curKey = score.key;
+  const pageStarts: number[] = [];
   pages.forEach((page, pi) => {
+    pageStarts.push(score.measures.length);
     const pageClefs = page.parts.flatMap((p) => p.clefs as Clef[]);
     const map = alignStaves(refClefs, pageClefs.length ? pageClefs : refClefs);
     // implicit time/key change at page start
@@ -126,8 +130,50 @@ export function convertPages(pagesIn: PageTranscription[], opts: { reorder?: boo
     for (const u of page.uncertain ?? []) score.notes!.push(pages.length > 1 ? `Page ${pi + 1}: ${u}` : u);
   });
   if (!score.measures.length) score.measures.push({ staves: refClefs.map(() => ({ voices: [[fullRest()]] })) });
+  applyOctaveLines(score, pageStarts);
   const repaired = fitScore(score);
   return { score, warnings, repaired };
+}
+
+/**
+ * Notes under an 8va / 8vb line are transcribed as printed. Here they are moved to where they sound,
+ * and the marks are tidied: one start and one end per line. A line still open at the end of a page
+ * carries on only if the next page marks it again on its first note; otherwise it ends with the page.
+ */
+export function applyOctaveLines(score: Score, pageStarts: number[] = [0]): void {
+  const lens = measureLengths(score);
+  const staffCount = score.parts.reduce((n, p) => n + p.staves.length, 0);
+  for (let staff = 0; staff < staffCount; staff++) {
+    const notes = staffEvents(score, staff, lens).filter((p) => !p.e.rest && p.e.pitches.length);
+    let open: NoteEvent['ottava'];
+    let last: NoteEvent | undefined;
+    let page = 0;
+    for (const { e, measure } of notes) {
+      let newPage = false;
+      while (page + 1 < pageStarts.length && measure >= pageStarts[page + 1]) {
+        page++;
+        newPage = true;
+      }
+      if (open && last && ((newPage && e.ottava !== open) || (e.ottava && e.ottava !== open))) {
+        last.ottavaEnd = true;
+        open = undefined;
+      }
+      if (e.ottava) {
+        if (open) delete e.ottava;
+        else open = e.ottava;
+      }
+      if (open) {
+        const octaves = ottavaSemitones(open) / 12;
+        for (const p of e.pitches) p.octave += octaves;
+        last = e;
+      }
+      if (e.ottavaEnd) {
+        if (!open) delete e.ottavaEnd;
+        open = undefined;
+      }
+    }
+    if (open && last) last.ottavaEnd = true;
+  }
 }
 
 function convertMeasure(pm: PageMeasure, map: number[], staffCount: number, warnings: string[], page: number, idx: number): Measure {

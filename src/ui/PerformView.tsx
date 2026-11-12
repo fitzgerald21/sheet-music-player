@@ -92,7 +92,7 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
   }, [hands, staffInfo]);
 
   // a plan with every note (for highlighting / the keyboard) and one for what the app plays
-  const visual = useMemo(() => buildPlan(score, { humanize: false }), [score]);
+  const visual = useMemo(() => buildPlan(score, { humanize: false, tremolo: false }), [score]);
   const startTime = useMemo(() => (startMeasure !== undefined ? visual.measures.find((m) => m.measure === startMeasure)?.time ?? 0 : 0), [visual, startMeasure]);
   const keyRange = useMemo(() => {
     const ms = visual.notes.map((n) => n.midi);

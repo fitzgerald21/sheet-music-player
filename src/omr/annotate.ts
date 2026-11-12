@@ -8,10 +8,11 @@ import { pitchToString } from '../model/pitch';
 
 export interface PageExtras {
   title: string;
+  subtitle?: string;
   composer: string;
   lyricist: string;
   tempo: number;
-  measures: { m: number; chords: { beat: number; symbol: string }[]; lyrics: string[] }[];
+  measures: { m: number; chords: { beat: number; symbol: string }[]; lyrics: string[]; text?: string }[];
 }
 
 /** Which things the model is asked to read. */
@@ -55,14 +56,16 @@ const system = (want: ExtrasWanted) => `You help digitise printed sheet music. T
 You are given the top staff of every measure the machine found, in reading order (system by system, left to right). Notes are written pitch/duration: w whole, h half, q quarter, 8 eighth, 16 sixteenth, a "." for each dot, "t" for a triplet, r for a rest, R for a whole-measure rest, "~" for a note tied to the next, "+" between the notes of a chord. Use the melody to find each measure in the photo. The machine sometimes misreads a note, so match measures by their overall shape and their position on the page, not note by note.
 
 Reply with one JSON object and nothing else:
-{"title":"","composer":"","lyricist":"","tempo":0,"measures":[{"m":1,"chords":[{"beat":1,"symbol":"Bb"}],"lyrics":["Sing","a","song"]}]}
+{"title":"","subtitle":"","composer":"","lyricist":"","tempo":0,"measures":[{"m":1,"text":"","chords":[{"beat":1,"symbol":"Bb"}],"lyrics":["Sing","a","song"]}]}
 
 - title, composer, lyricist: as printed on this page, "" if not printed. Title in normal capitalisation.
+- subtitle: the smaller line printed under the title, such as 'from "The Jungle Book" (1967)'; "" if there is none.
 - tempo: the metronome mark in quarter notes per minute, 0 if none is printed. If only a word is printed (Moderately, Allegro, Slowly…), give your best estimate in quarter notes per minute.
 - measures: one entry for every measure given to you, with the same number "m".
+- text: tempo and style words printed above that measure, exactly as printed ("Swing eighths", "rit.", "a tempo"); "" if none. Not dynamics and not chord symbols.
 - chords: the chord symbols printed above that measure, in order. "beat" is where the symbol sits, 1-based, in units of the time signature's lower number (1.5 = the second eighth note in 4/4). In 6/8, 9/8 and 12/8 the unit is the eighth note, so the dotted-quarter pulses fall on beats 1, 4, 7 and 10 – a symbol over the second pulse is beat 4, not beat 2. Write flats as "b" and sharps as "#": "Eb", "Bb7/F", "Edim", "F7sus4", "Gm", "F/A". Ignore guitar chord diagrams and fingering numbers. [] if none.
 - lyrics: the first verse only. Give exactly one string for every sung note of the measure – the list tells you how many. A note that starts a tie counts once; the note it is tied to is not counted. Use the syllable printed under that note; end it with "-" when the word continues on a later note ("ev-", "ry"); use "" for a note with no syllable of its own (a syllable held over several notes). [] for every measure if the music has no lyrics.
-${[!want.info && '- Do not read the title, composer, lyricist or tempo: leave them "" and 0.', !want.chords && '- Do not read chord symbols: give [] for "chords" in every measure.', !want.lyrics && '- Do not read lyrics: give [] for "lyrics" in every measure.'].filter(Boolean).map((l) => l + '\n').join('')}- Never invent text that is not printed. If you cannot find a measure in the photo, give it empty chords and lyrics.`;
+${[!want.info && '- Do not read the title, subtitle, composer, lyricist, tempo or text: leave them "" and 0.', !want.chords && '- Do not read chord symbols: give [] for "chords" in every measure.', !want.lyrics && '- Do not read lyrics: give [] for "lyrics" in every measure.'].filter(Boolean).map((l) => l + '\n').join('')}- Never invent text that is not printed. If you cannot find a measure in the photo, give it empty chords and lyrics.`;
 
 function describe(score: Score): string {
   const slots = lyricSlots(score);
@@ -87,6 +90,7 @@ function normalise(raw: unknown): PageExtras {
   const text = (v: unknown) => (typeof v === 'string' ? v.trim() : '');
   return {
     title: text(r.title),
+    subtitle: text(r.subtitle),
     composer: text(r.composer),
     lyricist: text(r.lyricist),
     tempo: Number(r.tempo) || 0,
@@ -96,6 +100,7 @@ function normalise(raw: unknown): PageExtras {
         .map((c) => ({ beat: Number(c?.beat) || 1, symbol: text(c?.symbol ?? (c as { text?: string })?.text) }))
         .filter((c) => c.symbol),
       lyrics: (Array.isArray(m?.lyrics) ? m.lyrics : []).map(text),
+      text: text(m?.text),
     })),
   };
 }
@@ -147,11 +152,12 @@ export function applyExtras(score: Score, raw: PageExtras, want: ExtrasWanted = 
   // what was switched off is dropped even if the model answered it anyway
   const extras: PageExtras = {
     ...raw,
-    ...(want.info ? {} : { title: '', composer: '', lyricist: '', tempo: 0 }),
-    measures: raw.measures.map((m) => ({ m: m.m, chords: want.chords ? m.chords : [], lyrics: want.lyrics ? m.lyrics : [] })),
+    ...(want.info ? {} : { title: '', subtitle: '', composer: '', lyricist: '', tempo: 0 }),
+    measures: raw.measures.map((m) => ({ m: m.m, chords: want.chords ? m.chords : [], lyrics: want.lyrics ? m.lyrics : [], text: want.info ? m.text ?? '' : '' })),
   };
   const summary: ExtrasSummary = { chords: 0, lyrics: 0, uneven: [] };
   if (extras.title) score.title = extras.title;
+  if (extras.subtitle) score.subtitle = extras.subtitle;
   if (extras.composer) score.composer = extras.composer;
   if (extras.lyricist) score.lyricist = extras.lyricist;
   if (extras.tempo >= 30 && extras.tempo <= 260) score.tempo = Math.round(extras.tempo);
@@ -168,6 +174,7 @@ export function applyExtras(score: Score, raw: PageExtras, want: ExtrasWanted = 
     const i = em.m - 1;
     const measure = score.measures[i];
     if (!measure) continue;
+    if (em.text && em.text.length <= 60) measure.text = em.text;
     const beats = times[i][0];
     const spread = inPulses && compound(times[i]);
     const chords = em.chords

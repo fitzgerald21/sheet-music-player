@@ -1,8 +1,9 @@
 import { parseChord, musicXmlKind } from './chords';
-import { BASE_TICKS, TPQ, eventTicks, measureTicks } from './duration';
+import { TPQ, eventTicks, measureTicks } from './duration';
 import { keyAt, measureLengths, timeAt } from './fix';
 import { keyAlter, midiOf } from './pitch';
-import { Clef, Measure, NoteEvent, Part, Score } from './types';
+import { hairpinSpans, ottavaSpans, tripletGroups } from './spans';
+import { Clef, Hairpin, Measure, NoteEvent, Ottava, Part, Score } from './types';
 
 const TYPE_NAME: Record<string, string> = { w: 'whole', h: 'half', q: 'quarter', '8': 'eighth', '16': '16th', '32': '32nd', '64': '64th' };
 const ACC_NAME: Record<number, string> = { 2: 'double-sharp', 1: 'sharp', 0: 'natural', '-1': 'flat', '-2': 'flat-flat' } as never;
@@ -51,6 +52,20 @@ export function toMusicXML(score: Score, opts: XmlOptions = {}): XmlExport {
   const lens = measureLengths(score);
   const eventKeys = new Map<string, string>();
   const staffMap: number[] = [];
+
+  // hairpins and octave lines: what opens before a note and what closes after it
+  const wedgeStart = new Map<string, Hairpin>();
+  const wedgeStop = new Set<string>();
+  for (const h of hairpinSpans(score)) {
+    wedgeStart.set(h.from, h.value);
+    wedgeStop.add(h.to);
+  }
+  const shiftStart = new Map<string, Ottava>();
+  const shiftStop = new Map<string, Ottava>();
+  for (const o of ottavaSpans(score)) {
+    shiftStart.set(o.from, o.value);
+    shiftStop.set(o.to, o.value);
+  }
 
   // global staff offset of every part
   const partOffsets: number[] = [];
@@ -188,8 +203,8 @@ export function toMusicXML(score: Score, opts: XmlOptions = {}): XmlExport {
           const tkey = `${si}|${vi}`;
           let tick = 0;
           let graceIdx = 0;
-          let tupletAcc = 0;
-          let tupletGroup = 0;
+          const triplets = tripletGroups(voice, len);
+          const staffXml = p.staves.length > 1 ? `<staff>${si + 1}</staff>` : '';
           voice.forEach((e, ei) => {
             const t = eventTicks(e, len);
             if (e.grace) {
@@ -205,21 +220,12 @@ export function toMusicXML(score: Score, opts: XmlOptions = {}): XmlExport {
                 `<direction placement="below"><direction-type><dynamics><${e.dynamic}/></dynamics></direction-type>${p.staves.length > 1 ? `<staff>${si + 1}</staff>` : ''}</direction>`,
               );
             }
-            // tuplet bookkeeping
-            let tupletMark = '';
-            if (e.triplet && !e.grace) {
-              if (tupletAcc === 0) {
-                tupletGroup = (BASE_TICKS[e.dur] * 2 * (e.dots ? 1.5 : 1)); // three triplet notes span two plain ones
-                tupletMark = '<tuplet type="start" bracket="no"/>';
-              }
-              tupletAcc += t;
-              if (tupletAcc >= tupletGroup - 1) {
-                tupletMark += '<tuplet type="stop"/>';
-                tupletAcc = 0;
-              }
-            } else {
-              tupletAcc = 0;
-            }
+            const shift = shiftStart.get(e.id);
+            if (shift) out.push(`<direction placement="${shift > 0 ? 'above' : 'below'}"><direction-type>${shiftXml(shift, shift > 0 ? 'down' : 'up')}</direction-type>${staffXml}</direction>`);
+            const wedge = wedgeStart.get(e.id);
+            if (wedge) out.push(`<direction placement="below"><direction-type><wedge type="${wedge === 'cresc' ? 'crescendo' : 'diminuendo'}" number="1"/></direction-type>${staffXml}</direction>`);
+            const tm = triplets.get(ei);
+            const tupletMark = (tm?.start ? `<tuplet type="start" bracket="${tm.bracket ? 'yes' : 'no'}"/>` : '') + (tm?.stop ? '<tuplet type="stop"/>' : '');
             const prevTied = tieState.get(tkey) ?? new Set<number>();
             const nowTied = new Set<number>();
             const pitches = e.rest ? [null] : e.pitches;
@@ -280,17 +286,20 @@ export function toMusicXML(score: Score, opts: XmlOptions = {}): XmlExport {
                     `<articulations>${arts.map((a) => ({ staccato: '<staccato/>', accent: '<accent/>', tenuto: '<tenuto/>', marcato: '<strong-accent/>' })[a as 'staccato']).join('')}</articulations>`,
                   );
                 if (e.artic?.includes('fermata')) notations.push('<fermata type="upright"/>');
+                if (e.tremolo && pt && !e.grace) notations.push(`<ornaments><tremolo type="single">${e.tremolo}</tremolo></ornaments>`);
               }
               if (notations.length) n.push(`<notations>${notations.join('')}</notations>`);
               if (pidx === 0 && lyricXml) n.push(lyricXml);
               n.push('</note>');
               out.push(n.join(''));
             });
+            if (wedgeStop.has(e.id)) out.push(`<direction placement="below"><direction-type><wedge type="stop" number="1"/></direction-type>${staffXml}</direction>`);
+            const shiftEnd = shiftStop.get(e.id);
+            if (shiftEnd) out.push(`<direction><direction-type>${shiftXml(shiftEnd, 'stop')}</direction-type>${staffXml}</direction>`);
             if (!e.grace) {
               tieState.set(tkey, nowTied);
               tick += t;
             }
-            void ei;
           });
         });
       });
@@ -336,6 +345,10 @@ export function prettyChord(text: string): string {
     .replace(/^([A-G])#/, '$1♯')
     .replace(/\/([A-G])b/, '/$1♭')
     .replace(/\/([A-G])#/, '/$1♯');
+}
+
+function shiftXml(o: Ottava, type: 'up' | 'down' | 'stop'): string {
+  return `<octave-shift type="${type}" size="${Math.abs(o)}" number="1"/>`;
 }
 
 function sameEnding(a: Measure, b: Measure): boolean {

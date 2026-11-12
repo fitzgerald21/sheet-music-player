@@ -81,6 +81,7 @@ function normalise(raw: unknown): PageTranscription {
   const r = (raw ?? {}) as Partial<PageTranscription>;
   return {
     title: r.title ?? '',
+    subtitle: r.subtitle ?? '',
     composer: r.composer ?? '',
     lyricist: r.lyricist ?? '',
     arranger: r.arranger ?? '',

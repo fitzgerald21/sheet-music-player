@@ -20,6 +20,9 @@ export type Articulation = 'staccato' | 'accent' | 'tenuto' | 'marcato' | 'ferma
 export const DYNAMICS = ['ppp', 'pp', 'p', 'mp', 'mf', 'f', 'ff', 'fff', 'sfz', 'fp'] as const;
 export type Dynamic = (typeof DYNAMICS)[number];
 
+export type Hairpin = 'cresc' | 'dim';
+export type Ottava = 8 | -8 | 15 | -15;
+
 export interface NoteEvent {
   id: string;
   /** Empty for rests. */
@@ -35,6 +38,19 @@ export interface NoteEvent {
   slurEnd?: boolean;
   artic?: Articulation[];
   dynamic?: Dynamic;
+  /** Tremolo slashes through the stem (1 = eighths, 2 = sixteenths, 3 = as fast as possible). */
+  tremolo?: 1 | 2 | 3;
+  /** A crescendo or diminuendo hairpin opens at this note. */
+  hairpin?: Hairpin;
+  /** The open hairpin of this staff closes at this note. */
+  hairpinEnd?: boolean;
+  /**
+   * An 8va (8), 8vb (-8), 15ma (15) or 15mb (-15) line starts at this note and covers the whole staff.
+   * Pitches are always stored as they sound; the line only changes how they are drawn.
+   */
+  ottava?: Ottava;
+  /** Last note under the octave line of this staff. */
+  ottavaEnd?: boolean;
   lyric?: string;
 }
 

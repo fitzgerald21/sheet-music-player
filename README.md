@@ -3,8 +3,8 @@
 Take a photo of sheet music (one page or several), and get a real, editable score you can play back.
 
 - **Scan**: photograph pages with your phone (or pick photos). Claude reads every note, rest, tie, chord symbol, lyric, repeat and D.C./coda mark, and multi-page pieces are stitched together (pages with printed numbers are sorted automatically).
-- **See it**: the music is engraved properly (OpenSheetMusicDisplay), with lyrics, chord symbols, dynamics and articulations.
-- **Hear it**: a sampled grand piano (Salamander) with reverb, dynamics, accents, staccato, slurs and a light human feel. Other parts can use voice, flute, strings, organ, music box, marimba, guitar or bass sounds. Repeats, 1st/2nd endings, D.C./D.S. al Fine/Coda are followed. Notes light up as they play and the page follows along.
+- **See it**: the music is engraved properly (OpenSheetMusicDisplay), with lyrics, chord symbols, dynamics, articulations, crescendo and diminuendo hairpins, 8va/8vb lines, tremolo slashes, triplet brackets and a subtitle line under the title.
+- **Hear it**: a sampled grand piano (Salamander) with reverb, dynamics, crescendos and diminuendos, tremolos, accents, staccato, slurs and a light human feel. Eighth notes are swung from a measure whose text says "Swing" until one that says "Straight". Other parts can use voice, flute, strings, organ, music box, marimba, guitar or bass sounds. Repeats, 1st/2nd endings, D.C./D.S. al Fine/Coda are followed. Notes light up as they play and the page follows along.
 - **Practice**: tempo slider (25–200%), metronome, one-bar count-in, loop any range of measures, tap a measure to start there, mute/solo/volume per part.
 - **Edit**: tap a note to change its pitch, duration, accidental, ties, articulations, dynamics and lyrics; add chord notes or a second voice; insert/delete/copy/paste measures; add chord symbols, repeats, endings, jumps, tempo and key changes; undo/redo.
 - **Transpose** by any interval or to any key (key signatures, note spelling and chord symbols all follow), or shift a single part by octaves.

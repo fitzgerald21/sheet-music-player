@@ -29,6 +29,8 @@ export interface PageMeasure {
 
 export interface PageTranscription {
   title: string;
+  /** second line under the title; older answers and other readers leave it out */
+  subtitle?: string;
   composer: string;
   lyricist: string;
   arranger: string;
@@ -48,9 +50,10 @@ const int = { type: 'integer' } as const;
 export const PAGE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
-  required: ['title', 'composer', 'lyricist', 'arranger', 'pageNumber', 'tempo', 'timeSignature', 'keyFifths', 'parts', 'measures', 'uncertain'],
+  required: ['title', 'subtitle', 'composer', 'lyricist', 'arranger', 'pageNumber', 'tempo', 'timeSignature', 'keyFifths', 'parts', 'measures', 'uncertain'],
   properties: {
     title: str,
+    subtitle: str,
     composer: str,
     lyricist: str,
     arranger: str,

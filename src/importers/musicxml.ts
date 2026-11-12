@@ -1,11 +1,12 @@
 // MusicXML (partwise) -> Score. Handles the common subset: multiple parts & staves, voices, chords,
 // ties, slurs, tuplets (3:2), articulations, dynamics, lyrics, chord symbols, key/time/tempo changes,
-// repeats, voltas and D.C./D.S./Fine/Coda.
+// repeats, voltas and D.C./D.S./Fine/Coda, hairpins, octave lines and tremolo slashes.
 import { unzipSync, strFromU8 } from 'fflate';
-import { fitScore, fullRest } from '../model/fix';
+import { fitScore, fullRest, measureLengths } from '../model/fix';
+import { staffEvents } from '../model/spans';
 import { TPQ } from '../model/duration';
 import { guessInstrument } from '../omr/convert';
-import { Articulation, Clef, DurType, Dynamic, DYNAMICS, Measure, Navigation, NoteEvent, Part, Pitch, Score, Step, newId } from '../model/types';
+import { Articulation, Clef, DurType, Dynamic, DYNAMICS, Hairpin, Measure, Navigation, NoteEvent, Ottava, Part, Pitch, Score, Step, newId } from '../model/types';
 import { beatOf, chordSymbolFromKind, eventsForTicks } from './common';
 
 const TYPE_MAP: Record<string, DurType> = {
@@ -61,6 +62,16 @@ interface RawNote {
   voice: string;
   dynamic?: Dynamic;
   measureRest: boolean;
+  tremolo?: 1 | 2 | 3;
+}
+
+/** Start or end of a hairpin or octave line, at a place in a measure. */
+interface LineMark {
+  staff: number;
+  tick: number;
+  hairpin?: Hairpin;
+  ottava?: Ottava;
+  stop?: 'hairpin' | 'ottava';
 }
 
 interface PartMeasure {
@@ -69,6 +80,7 @@ interface PartMeasure {
   measure: Partial<Measure>;
   chords: { beat: number; text: string }[];
   dynamics: { staff: number; tick: number; d: Dynamic }[];
+  lines: LineMark[];
 }
 
 export function parseMusicXML(xmlText: string): Score {
@@ -106,7 +118,7 @@ export function parseMusicXML(xmlText: string): Score {
     const measures: PartMeasure[] = [];
     let mIdx = 0;
     for (const mEl of kids(partEl, 'measure')) {
-      const pm: PartMeasure = { notes: [], length: 0, measure: {}, chords: [], dynamics: [] };
+      const pm: PartMeasure = { notes: [], length: 0, measure: {}, chords: [], dynamics: [], lines: [] };
       let pos = 0;
       let maxPos = 0;
       let lastStart = 0;
@@ -166,6 +178,18 @@ export function parseMusicXML(xmlText: string): Score {
                 const factor = ({ half: 2, quarter: 1, eighth: 0.5, whole: 4 }[unit] ?? 1) * (dotted ? 1.5 : 1);
                 setTempo(Math.round(num(metro, 'per-minute')! * factor));
               }
+              const wedge = kid(dt, 'wedge')?.getAttribute('type');
+              if (wedge === 'crescendo' || wedge === 'diminuendo') pm.lines.push({ staff, tick: pos + offset, hairpin: wedge === 'crescendo' ? 'cresc' : 'dim' });
+              else if (wedge === 'stop') pm.lines.push({ staff, tick: pos + offset, stop: 'hairpin' });
+              const shift = kid(dt, 'octave-shift');
+              if (shift) {
+                // "down" means the notes are drawn lower than they sound: an 8va line
+                const type = shift.getAttribute('type');
+                const two = parseInt(shift.getAttribute('size') ?? '8', 10) >= 15;
+                if (type === 'down') pm.lines.push({ staff, tick: pos + offset, ottava: two ? 15 : 8 });
+                else if (type === 'up') pm.lines.push({ staff, tick: pos + offset, ottava: two ? -15 : -8 });
+                else if (type === 'stop') pm.lines.push({ staff, tick: pos + offset, stop: 'ottava' });
+              }
               if (kid(dt, 'segno')) pm.measure.segno = true;
               if (kid(dt, 'coda')) pm.measure.coda = true;
               const words = kids(dt, 'words').map((w) => (w.textContent ?? '').trim()).filter(Boolean).join(' ');
@@ -215,7 +239,10 @@ export function parseMusicXML(xmlText: string): Score {
             let slurStart = false;
             let slurEnd = false;
             let tieStart = kids(el, 'tie').some((t) => t.getAttribute('type') === 'start');
+            let tremolo: RawNote['tremolo'];
             for (const n of notations) {
+              const trem = kid(kid(n, 'ornaments'), 'tremolo');
+              if (trem && (trem.getAttribute('type') ?? 'single') === 'single') tremolo = Math.max(1, Math.min(3, parseInt(trem.textContent ?? '3', 10) || 3)) as 1 | 2 | 3;
               for (const s of kids(n, 'slur')) {
                 if (s.getAttribute('type') === 'start') slurStart = true;
                 if (s.getAttribute('type') === 'stop') slurEnd = true;
@@ -254,6 +281,7 @@ export function parseMusicXML(xmlText: string): Score {
               staff: Math.max(0, (num(el, 'staff') ?? 1) - 1),
               voice: txt(el, 'voice') ?? '1',
               measureRest: restEl?.getAttribute('measure') === 'yes' || (!!restEl && !typeName),
+              tremolo,
             };
             pm.notes.push(raw);
             if (!isChord) {
@@ -331,7 +359,7 @@ export function parseMusicXML(xmlText: string): Score {
   const score: Score = {
     id: newId('s'),
     title,
-    subtitle: txt(kid(root, 'work'), 'work-number') || undefined,
+    subtitle: txt(kid(root, 'work'), 'work-number') || creditText(root, 'subtitle'),
     composer: creator('composer') || creditText(root, 'composer'),
     lyricist: creator('lyricist') || creator('poet') || undefined,
     arranger: creator('arranger') || undefined,
@@ -344,7 +372,36 @@ export function parseMusicXML(xmlText: string): Score {
     updated: Date.now(),
   };
   fitScore(score);
+  placeLines(score, partMeasures);
   return score;
+}
+
+/** Puts hairpins and octave lines on the notes they start and end at. */
+function placeLines(score: Score, partMeasures: PartMeasure[][]) {
+  const lens = measureLengths(score);
+  const starts: number[] = [];
+  lens.reduce((sum, l, i) => ((starts[i] = sum), sum + l), 0);
+  let staffBase = 0;
+  partMeasures.forEach((pms, pi) => {
+    const notes = new Map<number, ReturnType<typeof staffEvents>>();
+    pms.forEach((pm, mi) => {
+      for (const line of pm.lines) {
+        const staff = staffBase + Math.min(Math.max(line.staff, 0), score.parts[pi].staves.length - 1);
+        if (!notes.has(staff)) notes.set(staff, staffEvents(score, staff, lens).filter((p) => !p.e.rest && !p.e.grace));
+        const list = notes.get(staff)!;
+        const at = starts[mi] + line.tick;
+        if (line.stop) {
+          const last = [...list].reverse().find((p) => p.at < at);
+          if (last) last.e[line.stop === 'hairpin' ? 'hairpinEnd' : 'ottavaEnd'] = true;
+        } else {
+          const first = list.find((p) => p.at >= at);
+          if (first && line.hairpin) first.e.hairpin = line.hairpin;
+          if (first && line.ottava) first.e.ottava = line.ottava;
+        }
+      }
+    });
+    staffBase += score.parts[pi].staves.length;
+  });
 }
 
 function propagateEndings(partEl: Element, measures: PartMeasure[]) {
@@ -459,6 +516,8 @@ function buildVoice(list: RawNote[], pm: PartMeasure, staff: number): NoteEvent[
     const base: Partial<NoteEvent> = {};
     if (head.slurStart) base.slurStart = true;
     if (head.slurEnd) base.slurEnd = true;
+    const tremolo = g.find((n) => n.tremolo)?.tremolo;
+    if (tremolo && pitches.length) base.tremolo = tremolo;
     const artic = [...new Set(g.flatMap((n) => n.artic))];
     if (artic.length) base.artic = artic;
     const lyric = g.find((n) => n.lyric)?.lyric;
