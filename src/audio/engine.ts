@@ -243,6 +243,18 @@ class Engine {
     return false;
   }
 
+  /** The app is in front again after being in the background. */
+  cameBack() {
+    this.checkedAt = 0;
+    this.lastSound = 0;
+    if (!this.initialized) return;
+    const ctx = Tone.getContext().rawContext as unknown as AudioContext;
+    if (ctx.state !== 'running') void ctx.resume().catch(() => undefined);
+    // give a song that was playing a fresh chance to recover before it is reported as interrupted
+    this.stallClock = -1;
+    this.stallNudged = false;
+  }
+
   /** Must be called from a user gesture (iOS). */
   async init(): Promise<void> {
     const ctx = Tone.getContext().rawContext as unknown as AudioContext;
@@ -485,4 +497,14 @@ class Engine {
 }
 
 export const engine = new Engine();
+
+// Leaving the app (or locking the phone) puts the sound to sleep. On the way back, restart it if it
+// can be restarted without a tap, and make the next play check the audio from scratch.
+if (typeof document !== 'undefined') {
+  const back = () => {
+    if (document.visibilityState === 'visible') engine.cameBack();
+  };
+  document.addEventListener('visibilitychange', back);
+  window.addEventListener('pageshow', back);
+}
 if (import.meta.env?.DEV) Object.assign(window, { __smpEngine: engine, __smpTone: Tone });
