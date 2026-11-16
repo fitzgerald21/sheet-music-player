@@ -9,7 +9,8 @@
     "start": "NODE_ENV=production tsx server/index.ts",
     "test": "vitest run",
     "transcribe": "tsx scripts/transcribe.ts",
-    "fetch-homr": "node scripts/fetch-homr.mjs"
+    "fetch-homr": "node scripts/fetch-homr.mjs",
+    "build:app": "tsc -p . && vite build --outDir apple/web --emptyOutDir"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^1.5.0",

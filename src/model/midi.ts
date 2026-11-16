@@ -5,6 +5,7 @@ import { Score } from './types';
 const PPQ = 480;
 const GM_PROGRAM: Record<string, number> = {
   piano: 0, epiano: 4, voice: 52, flute: 73, strings: 48, organ: 19, musicbox: 10, marimba: 12, guitar: 24, bass: 32,
+  harpsichord: 6, celesta: 8, vibraphone: 11, harp: 46, clarinet: 71, trumpet: 56, pad: 89, synth: 80,
 };
 
 function vlq(n: number): number[] {

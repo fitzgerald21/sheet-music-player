@@ -123,14 +123,23 @@ function quantise(t: number): number {
 }
 
 function instrumentFor(program: number): InstrumentId {
+  if (program === 6 || program === 7) return 'harpsichord';
   if (program < 8) return 'piano';
+  if (program === 8) return 'celesta';
+  if (program === 11) return 'vibraphone';
+  if (program === 12 || program === 13) return 'marimba';
   if (program < 16) return 'musicbox';
   if (program < 24) return 'organ';
   if (program < 32) return 'guitar';
   if (program < 40) return 'bass';
+  if (program === 46) return 'harp';
+  if (program >= 52 && program < 55) return 'voice';
   if (program < 56) return 'strings';
-  if (program < 64) return 'voice';
+  if (program < 64) return 'trumpet';
+  if (program >= 64 && program < 72) return 'clarinet';
   if (program >= 72 && program < 80) return 'flute';
+  if (program >= 80 && program < 88) return 'synth';
+  if (program >= 88 && program < 96) return 'pad';
   return 'piano';
 }
 

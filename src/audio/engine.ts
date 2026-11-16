@@ -14,6 +14,14 @@ export const INSTRUMENTS: { id: InstrumentId; label: string }[] = [
   { id: 'marimba', label: 'Marimba' },
   { id: 'guitar', label: 'Nylon guitar' },
   { id: 'bass', label: 'Bass' },
+  { id: 'harpsichord', label: 'Harpsichord' },
+  { id: 'celesta', label: 'Celesta' },
+  { id: 'vibraphone', label: 'Vibraphone' },
+  { id: 'harp', label: 'Harp' },
+  { id: 'clarinet', label: 'Clarinet' },
+  { id: 'trumpet', label: 'Trumpet' },
+  { id: 'pad', label: 'Warm pad' },
+  { id: 'synth', label: 'Synth lead' },
 ];
 
 interface Voice {
@@ -172,6 +180,100 @@ function makeInstrument(id: InstrumentId): Voice {
           }),
         [new Tone.Filter(900, 'lowpass')],
         -6,
+      );
+    case 'harpsichord':
+      return polyVoice(
+        () =>
+          new Tone.PolySynth(Tone.Synth, {
+            oscillator: { type: 'custom', partials: [1, 0.8, 0.7, 0.55, 0.5, 0.4, 0.35, 0.3, 0.2, 0.18, 0.12, 0.1] },
+            envelope: { attack: 0.001, decay: 0.9, sustain: 0.04, release: 0.25 },
+          }),
+        [new Tone.Filter(700, 'highpass'), new Tone.Filter(7000, 'lowpass')],
+        -14,
+        0.3,
+      );
+    case 'celesta':
+      return polyVoice(
+        () =>
+          new Tone.PolySynth(Tone.FMSynth, {
+            harmonicity: 5,
+            modulationIndex: 2.2,
+            oscillator: { type: 'sine' },
+            modulation: { type: 'sine' },
+            envelope: { attack: 0.001, decay: 0.9, sustain: 0.02, release: 0.9 },
+            modulationEnvelope: { attack: 0.001, decay: 0.12, sustain: 0, release: 0.2 },
+          }),
+        [new Tone.Filter(7000, 'lowpass')],
+        -10,
+      );
+    case 'vibraphone':
+      return polyVoice(
+        () =>
+          new Tone.PolySynth(Tone.FMSynth, {
+            harmonicity: 4,
+            modulationIndex: 1.1,
+            oscillator: { type: 'sine' },
+            modulation: { type: 'sine' },
+            envelope: { attack: 0.002, decay: 2.6, sustain: 0.05, release: 1.8 },
+            modulationEnvelope: { attack: 0.002, decay: 0.3, sustain: 0, release: 0.3 },
+          }),
+        [new Tone.Tremolo(5.5, 0.45).start(), new Tone.Filter(5000, 'lowpass')],
+        -8,
+      );
+    case 'harp':
+      return polyVoice(
+        () =>
+          new Tone.PolySynth(Tone.Synth, {
+            oscillator: { type: 'custom', partials: [1, 0.35, 0.18, 0.08, 0.04] },
+            envelope: { attack: 0.002, decay: 2.2, sustain: 0.02, release: 1.6 },
+          }),
+        [new Tone.Filter({ frequency: 3200, type: 'lowpass', rolloff: -24 })],
+        -8,
+      );
+    case 'clarinet':
+      return polyVoice(
+        () =>
+          new Tone.PolySynth(Tone.Synth, {
+            // a clarinet sounds mostly its odd harmonics
+            oscillator: { type: 'custom', partials: [1, 0.02, 0.55, 0.02, 0.3, 0.02, 0.14, 0.01, 0.06] },
+            envelope: { attack: 0.05, decay: 0.15, sustain: 0.85, release: 0.2 },
+          }),
+        [new Tone.Vibrato(4.6, 0.03), new Tone.Filter(3200, 'lowpass')],
+        -11,
+        0.7,
+      );
+    case 'trumpet':
+      return polyVoice(
+        () =>
+          new Tone.PolySynth(Tone.Synth, {
+            oscillator: { type: 'custom', partials: [1, 0.9, 0.8, 0.65, 0.5, 0.35, 0.25, 0.15, 0.1] },
+            envelope: { attack: 0.035, decay: 0.2, sustain: 0.75, release: 0.18 },
+          }),
+        [new Tone.Vibrato(5.2, 0.04), new Tone.Filter({ frequency: 2600, type: 'lowpass', rolloff: -12 })],
+        -15,
+        0.6,
+      );
+    case 'pad':
+      return polyVoice(
+        () =>
+          new Tone.PolySynth(Tone.Synth, {
+            oscillator: { type: 'fatsine', count: 3, spread: 18 },
+            envelope: { attack: 0.5, decay: 0.4, sustain: 0.9, release: 1.8 },
+          }),
+        [new Tone.Chorus(0.6, 3.5, 0.5).start(), new Tone.Filter(2400, 'lowpass')],
+        -10,
+        0.6,
+      );
+    case 'synth':
+      return polyVoice(
+        () =>
+          new Tone.PolySynth(Tone.Synth, {
+            oscillator: { type: 'fatsquare', count: 2, spread: 12 },
+            envelope: { attack: 0.005, decay: 0.25, sustain: 0.6, release: 0.25 },
+          }),
+        [new Tone.Filter({ frequency: 2800, type: 'lowpass', rolloff: -24 }), new Tone.FeedbackDelay(0.19, 0.18)],
+        -18,
+        0.7,
       );
   }
 }
@@ -482,6 +584,12 @@ class Engine {
     const inst = part < 0 ? 'piano' : this.partInstruments[part] ?? 'piano';
     if (part >= 0 && this.channels[part]?.mute) return;
     this.routeTrigger(inst, part, midi, Tone.now() + 0.005, dur, vel);
+  }
+
+  /** Sound a key the player pressed on their own MIDI keyboard. */
+  playKey(midi: number, vel: number, instrument: InstrumentId = 'piano') {
+    if (!this.initialized) return;
+    this.getInstrument(instrument).trigger(midi, Tone.now() + 0.005, 1.5, Math.min(1, 0.25 + vel * 0.75));
   }
 
   click(accent: boolean) {

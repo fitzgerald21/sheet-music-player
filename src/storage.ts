@@ -1,5 +1,6 @@
 import { Score } from './model/types';
 import { Effort } from './omr/transcribe';
+import type { ThemeId } from './theme';
 
 const INDEX_KEY = 'smp.library.v1';
 const SCORE_KEY = (id: string) => `smp.score.v1.${id}`;
@@ -92,6 +93,8 @@ export interface Settings {
   zoom: number;
   humanize: boolean;
   playChords: boolean;
+  /** colours of the whole app */
+  theme: ThemeId;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -114,6 +117,7 @@ export const DEFAULT_SETTINGS: Settings = {
   zoom: typeof window !== 'undefined' && window.innerWidth < 700 ? 0.62 : 0.95,
   humanize: true,
   playChords: false,
+  theme: 'system',
 };
 
 export function loadSettings(): Settings {

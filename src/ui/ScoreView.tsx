@@ -20,6 +20,8 @@ export interface ScoreViewHandle {
   setTargets(ids: Set<string>): void;
   /** measure boxes in px relative to the score host */
   measureBoxes(): { x: number; y: number; w: number; h: number }[];
+  /** the middle of each note (by event id), in px from the left of the score host */
+  notePositions(): Map<string, number>;
 }
 
 interface Props {
@@ -33,6 +35,8 @@ interface Props {
   paper?: 'white' | 'cream' | 'dark';
   /** turn off tap-to-select (performance view handles taps itself) */
   passive?: boolean;
+  /** draw the whole piece as one long line, for side-scrolling */
+  singleLine?: boolean;
   /** things highlighted for a request to the assistant */
   marks?: Mark[];
   /** measures the assistant just changed */
@@ -48,7 +52,7 @@ interface MeasureBox {
 
 const UNIT = 10;
 
-export const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ score, zoom, selection, onSelect, onRendered, editMode, paper, passive, marks, changed }, ref) {
+export const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ score, zoom, selection, onSelect, onRendered, editMode, paper, passive, singleLine, marks, changed }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
   const elemsRef = useRef(new Map<string, SVGGElement[]>());
@@ -101,6 +105,7 @@ export const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({
     let cancelled = false;
     const run = async () => {
       try {
+        osmd.setOptions({ renderSingleHorizontalStaffline: !!singleLine, drawTitle: !singleLine, drawSubtitle: !singleLine, drawComposer: !singleLine, drawLyricist: !singleLine });
         await osmd.load(xml);
         if (cancelled || seq !== renderSeq.current) return;
         osmd.zoom = zoom;
@@ -120,7 +125,7 @@ export const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [score, zoom]);
+  }, [score, zoom, singleLine]);
 
   // re-layout on width change
   useEffect(() => {
@@ -304,6 +309,15 @@ export const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({
     },
     measureBoxes() {
       return measureBoxes.current;
+    },
+    notePositions() {
+      const out = new Map<string, number>();
+      const left = hostRef.current?.getBoundingClientRect().left ?? 0;
+      for (const [id, gs] of elemsRef.current) {
+        const r = (gs[0].querySelector('.vf-notehead') ?? gs[0]).getBoundingClientRect();
+        out.set(id, r.left - left + r.width / 2);
+      }
+      return out;
     },
   }));
 

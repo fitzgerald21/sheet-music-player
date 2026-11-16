@@ -106,7 +106,15 @@ export type InstrumentId =
   | 'musicbox'
   | 'marimba'
   | 'guitar'
-  | 'bass';
+  | 'bass'
+  | 'harpsichord'
+  | 'celesta'
+  | 'vibraphone'
+  | 'harp'
+  | 'clarinet'
+  | 'trumpet'
+  | 'pad'
+  | 'synth';
 
 export interface Part {
   id: string;

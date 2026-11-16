@@ -26,6 +26,12 @@ export function guessInstrument(name: string): InstrumentId {
   if (/flute|recorder|piccolo/.test(n)) return 'flute';
   if (/violin|viola|cello|string/.test(n)) return 'strings';
   if (/organ/.test(n)) return 'organ';
+  if (/harpsichord|cembalo/.test(n)) return 'harpsichord';
+  if (/harp/.test(n)) return 'harp';
+  if (/clarinet|oboe|sax/.test(n)) return 'clarinet';
+  if (/trumpet|horn|trombone|cornet/.test(n)) return 'trumpet';
+  if (/vibra/.test(n)) return 'vibraphone';
+  if (/celest/.test(n)) return 'celesta';
   if (/guitar/.test(n)) return 'guitar';
   if (/bass/.test(n) && !/piano/.test(n)) return 'bass';
   return 'piano';

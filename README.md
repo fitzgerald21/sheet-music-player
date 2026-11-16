@@ -4,15 +4,21 @@ Take a photo of sheet music (one page or several), and get a real, editable scor
 
 - **Scan**: photograph pages with your phone (or pick photos). Claude reads every note, rest, tie, chord symbol, lyric, repeat and D.C./coda mark, and multi-page pieces are stitched together (pages with printed numbers are sorted automatically).
 - **See it**: the music is engraved properly (OpenSheetMusicDisplay), with lyrics, chord symbols, dynamics, articulations, crescendo and diminuendo hairpins, 8va/8vb lines, tremolo slashes, triplet brackets and a subtitle line under the title.
-- **Hear it**: a sampled grand piano (Salamander) with reverb, dynamics, crescendos and diminuendos, tremolos, accents, staccato, slurs and a light human feel. Eighth notes are swung from a measure whose text says "Swing" until one that says "Straight". Other parts can use voice, flute, strings, organ, music box, marimba, guitar or bass sounds. Repeats, 1st/2nd endings, D.C./D.S. al Fine/Coda are followed. Notes light up as they play and the page follows along.
+- **Hear it**: a sampled grand piano (Salamander) with reverb, dynamics, crescendos and diminuendos, tremolos, accents, staccato, slurs and a light human feel. Eighth notes are swung from a measure whose text says "Swing" until one that says "Straight". Other parts can use electric piano, voice, flute, clarinet, trumpet, strings, organ, harpsichord, harp, celesta, vibraphone, music box, marimba, guitar, bass, a warm pad or a synth lead. Repeats, 1st/2nd endings, D.C./D.S. al Fine/Coda are followed. Notes light up as they play and the page follows along.
 - **Practice**: tempo slider (25–200%), metronome, one-bar count-in, loop any range of measures, tap a measure to start there, mute/solo/volume per part.
 - **Edit**: tap a note to change its pitch, duration, accidental, ties, articulations, dynamics and lyrics; add chord notes or a second voice; insert/delete/copy/paste measures; add chord symbols, repeats, endings, jumps, tempo and key changes; undo/redo.
 - **Transpose** by any interval or to any key (key signatures, note spelling and chord symbols all follow), or shift a single part by octaves.
 - **Play along on your own piano**: a large, distraction-free view (white, cream or dark paper) that keeps the screen awake. Turn pages by tapping either side, with the arrow keys, or with a Bluetooth page-turner pedal.
-  - *Play along*: the app plays the other hand or the other parts while the music scrolls and the keys you need light up.
-  - *Wait for me*: the music waits on each note until you play it, using a USB/Bluetooth **MIDI** digital piano (Chrome, Edge, Android), or, as an experiment, the **microphone** with an acoustic piano.
-  - It shows the name of the chord you're holding on a MIDI keyboard.
+  - *Play along*: the app plays the other hand or the other parts while the music scrolls and the keys you need light up. With a MIDI keyboard connected, the keys you press flash green or red and it tells you at the end how many notes you played in time.
+  - *Wait for me*: the music waits on each note until you play it, using a USB/Bluetooth **MIDI** digital piano, or, as an experiment, the **microphone** with an acoustic piano. At the end it says how many notes were right first time.
+  - Practise a range of measures, and repeat it until you stop.
+  - Four ways to see the music: **Pages** (the engraved score, turning by itself), **Side-scroll** (one long line sliding under a fixed playhead), **Falling notes** (each note drops onto the key that plays it) and **Original** (the photos or PDF pages the piece was scanned from, with a cursor that follows the music on them; pieces scanned earlier can have their pages added there).
+  - Choose the sound of the keyboard part for the session without changing the score.
+  - It shows the keys and the name of the chord you're holding on a MIDI keyboard, and can play your keys through the device's speakers.
+  - MIDI keyboards work in Chrome and Edge on a computer and on Android. Safari and every iPhone/iPad browser cannot use them, which is what the [iPhone, iPad and Mac app](#iphone-ipad-and-mac-app) is for.
 - **Chords**: printed chord symbols are read when scanning. For music without them, **Detect chords** works them out from the notes (slash chords included). They transpose with the music and can play softly along.
+- **Themes**: Settings → Appearance has light and dark colour themes (Paper, Parchment, Rosewood, Ocean, Graphite, Midnight, Forest) or follows the device.
+- **Practice diary**: the library shows how many days in a row you have practised, minutes this week, and your best result for each piece. It is kept in the browser, like the scores.
 - **Print**: a print view with real Letter/A4 pages, adjustable staff size, and a choice of parts, chord symbols, lyrics, title and measure numbers. It prints what's on screen, so it uses your transposed key and your fixes. Use "Save as PDF" in the print dialog to get a file.
 - **Import**: MusicXML (`.musicxml`, `.mxl`, `.xml`), MIDI, ABC, PDF (pages go to the scanner) and images.
 - **Find music**: search **The Session** (thousands of folk tunes with chords) and import with one tap. Search **IMSLP** (public-domain classical scores) and get its PDF/MIDI/MusicXML files, with links to more sources.
@@ -80,6 +86,18 @@ Then use **Import** in the library to open `song.smp.json`.
 
 The workflow in `.github/workflows/pages.yml` builds and publishes the app on every push to `main`. Turn it on once under **Settings → Pages → Source: GitHub Actions**. On Pages there is no server: scanning on the device works without a key, and for the Claude or OpenRouter/DeepInfra readers each user adds their own key in Settings.
 
+## iPhone, iPad and Mac app
+
+`apple/` holds an Xcode project for an app that shows this same web app and adds what Safari lacks: MIDI keyboards over USB or Bluetooth (Core MIDI), a share sheet or save dialog for exports, printing, and keeping the screen awake.
+
+```bash
+npm install
+npm run build:app                          # builds the web app into apple/web
+open apple/SheetMusicPlayer.xcodeproj      # choose "My Mac" or your iPhone/iPad, then Run
+```
+
+Run `npm run build:app` again after changing the web app. The project is generated from `apple/project.yml` with [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`cd apple && xcodegen`). On iPhone and iPad, plug the piano in with a USB adapter, or pair it with **Bluetooth MIDI…** in the play-along settings; on a Mac, pair Bluetooth keyboards in Audio MIDI Setup. The app has no server and does not include the on-device scanner, so scanning there needs a Claude or OpenRouter key in Settings.
+
 ## Tips for good scans
 
 - Shoot straight down, fill the frame with one page, and avoid shadows and curl. Use the rotate button if a photo comes in sideways.
@@ -129,6 +147,7 @@ photo ─► resize (≤2576 px, EXIF-rotated, contrast boost)
 - `src/omr` – prompt, output schema, Claude client (works in Node and the browser), OpenAI-compatible client, page merging
 - `src/importers` – MusicXML/MXL, MIDI (quantisation and hand splitting), ABC, PDF → images
 - `src/model/chordDetect.ts` – template-matching chord recognition
+- `src/omr/layout.ts` – finds the systems and bar lines on a page image (no note reading), for the Original view in play-along
 - `src/audio` – instruments, effects and the look-ahead scheduler
 - `src/ui` – React app (library, scanner, score view, palette, transport, panels)
 - `server` – tiny Node server: static files, `/api/transcribe` (streams progress as NDJSON), the IMSLP search proxy and the optional Audiveris runner

@@ -7,3 +7,7 @@ dist
 .env
 # models and runtime for on-device scanning, downloaded by `npm run fetch-homr`
 public/homr
+# the web app as built for the iPhone/iPad/Mac app by `npm run build:app`, and Xcode's own files
+apple/web
+apple/build
+xcuserdata

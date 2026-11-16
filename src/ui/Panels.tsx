@@ -5,6 +5,7 @@ import { Clef, InstrumentId, Measure, Navigation, Score, cloneScore } from '../m
 import { INTERVAL_NAMES, octaveShift, transposeScore } from '../model/transpose';
 import { keyName, transposeKey, keyTonicPitchClass } from '../model/pitch';
 import { Settings, Engine } from '../storage';
+import { THEMES } from '../theme';
 import { COMPAT_PRESETS } from '../omr/openaiCompat';
 import { DEFAULT_EXTRAS_MODEL } from '../omr/annotate';
 import { detectChords, removeChords } from '../model/chordDetect';
@@ -300,6 +301,18 @@ export function SettingsPanel({ settings, onChange, onClose, serverKey, audiveri
   const preset = COMPAT_PRESETS.find((p) => p.id === settings.compatPreset) ?? COMPAT_PRESETS[0];
   return (
     <Sheet title="Settings" onClose={onClose}>
+      <h3 className="sub-h">Appearance</h3>
+      <div className="theme-grid" role="radiogroup" aria-label="Theme">
+        {THEMES.map((t) => (
+          <button key={t.id} role="radio" aria-checked={settings.theme === t.id} className={`theme-swatch ${settings.theme === t.id ? 'on' : ''}`} onClick={() => onChange({ ...settings, theme: t.id })}>
+            <span className="swatch" style={{ background: t.id === 'system' ? `linear-gradient(135deg, ${t.swatch[0]} 50%, ${t.swatch[1]} 50%)` : t.swatch[0] }}>
+              <span style={{ background: t.swatch[1] }} />
+              <span style={{ background: t.swatch[2] }} />
+            </span>
+            {t.label}
+          </button>
+        ))}
+      </div>
       <h3 className="sub-h">Music recognition</h3>
       <div className="field">
         <label htmlFor="engine">Read photos with</label>

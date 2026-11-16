@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
 import { Icon } from './Icons';
+import { nativeApp } from '../native';
 import { toMusicXML } from '../model/musicxml';
 import { Score, cloneScore } from '../model/types';
 import { keyName } from '../model/pitch';
@@ -90,7 +91,7 @@ export function PrintView({ score, onBack }: Props) {
         <h1>Print</h1>
         <span className="grow" />
         <span className="hint hide-xs">{busy ? 'Laying out…' : `${pages} page${pages === 1 ? '' : 's'} · ${keyName(score.key).split(' /')[0]}`}</span>
-        <button className="btn primary" onClick={() => window.print()} disabled={busy}><Icon.download size={16} /> Print / Save PDF</button>
+        <button className="btn primary" onClick={() => (nativeApp.available ? nativeApp.post({ type: 'print' }) : window.print())} disabled={busy}><Icon.download size={16} /> Print / Save PDF</button>
       </header>
       <div className="print-options no-print">
         <div className="seg compact" role="radiogroup" aria-label="Paper size">

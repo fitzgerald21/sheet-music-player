@@ -2,19 +2,32 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Icon } from './Icons';
 import { ScoreView, ScoreViewHandle } from './ScoreView';
 import { PianoKeyboard, KeyMark } from './PianoKeyboard';
-import { engine } from '../audio/engine';
+import { FallingNotes } from './FallingNotes';
+import { OriginalPages, OriginalHandle } from './OriginalPages';
+import { engine, INSTRUMENTS } from '../audio/engine';
 import { midiIn } from '../audio/midiInput';
 import { MicListener } from '../audio/micListener';
 import { buildPlan, PlaybackPlan, PlayNote } from '../model/playback';
+import { buildSteps, sectionSpan, Tally, TimingScore } from '../model/practice';
+import { nativeApp } from '../native';
 import { chordFromMidis } from '../model/chordDetect';
 import { toneName } from '../model/pitch';
-import { Score } from '../model/types';
+import { InstrumentId, Score } from '../model/types';
+import { logSession } from '../practiceLog';
 import { Settings } from '../storage';
 
 type Mode = 'follow' | 'wait' | 'turn';
 type Hands = 'both' | 'rh' | 'lh' | 'none';
 type Input = 'midi' | 'mic';
 type Paper = 'white' | 'cream' | 'dark';
+/** How the music is shown: engraved pages, one long line, falling notes, or the photos it was scanned from. */
+type Look = 'pages' | 'scroll' | 'falling' | 'original';
+const LOOKS: { id: Look; label: string }[] = [
+  { id: 'pages', label: 'Pages' },
+  { id: 'scroll', label: 'Side-scroll' },
+  { id: 'falling', label: 'Falling notes' },
+  { id: 'original', label: 'Original' },
+];
 
 interface Props {
   score: Score;
@@ -23,11 +36,9 @@ interface Props {
   onExit: () => void;
 }
 
-interface Step {
-  time: number;
-  midis: number[];
-  ids: string[];
-}
+/** How close to its beat a key has to be to count in "Play along", in seconds. */
+const IN_TIME = 0.25;
+const tallyText = (t: Tally) => `${t.hit} of ${t.total} notes in time (${t.percent}%)${t.extra ? `, ${t.extra} extra` : ''}`;
 
 const PREFS_KEY = 'smp.perform.v1';
 function loadPrefs() {
@@ -46,6 +57,16 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
   const [input, setInput] = useState<Input>(prefs.input ?? 'midi');
   const [paper, setPaper] = useState<Paper>(prefs.paper ?? 'white');
   const [showKeys, setShowKeys] = useState<boolean>(prefs.showKeys ?? true);
+  const [thru, setThru] = useState<boolean>(prefs.thru ?? false);
+  const [look, setLook] = useState<Look>(prefs.look ?? 'pages');
+  /** the sound of the keyboard part, '' = as the score says */
+  const [sound, setSound] = useState<InstrumentId | ''>(prefs.sound ?? '');
+  const [origScale, setOrigScale] = useState(1);
+  const lastMeasure = score.measures.length - 1;
+  const [from, setFrom] = useState(Math.min(startMeasure ?? 0, lastMeasure));
+  const [to, setTo] = useState(lastMeasure);
+  const [repeat, setRepeat] = useState(false);
+  const [held, setHeld] = useState<Set<number>>(new Set());
   const [zoom, setZoom] = useState<number>(prefs.zoom ?? (window.innerWidth < 700 ? 0.8 : 1.25));
   const [speed, setSpeed] = useState(1);
   const [metronome, setMetronome] = useState(false);
@@ -66,24 +87,38 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
 
   useEffect(() => {
     try {
-      localStorage.setItem(PREFS_KEY, JSON.stringify({ mode, hands, accompany, input, paper, showKeys, zoom }));
+      localStorage.setItem(PREFS_KEY, JSON.stringify({ mode, hands, accompany, input, paper, showKeys, zoom, thru, look, sound }));
     } catch {
       /* ignore */
     }
-  }, [mode, hands, accompany, input, paper, showKeys, zoom]);
+  }, [mode, hands, accompany, input, paper, showKeys, zoom, thru, look, sound]);
+  // read by callbacks that outlive a render (the engine's end-of-piece call, MIDI listeners)
+  const live = useRef({ speed, repeat, thru, voice: 'piano' as InstrumentId });
+  live.current.speed = speed;
+  live.current.repeat = repeat;
+  live.current.thru = thru;
 
   // ---- which staves are "yours" ----
   const staffInfo = useMemo(() => {
     let g = 0;
     let kb: number[] = [];
-    score.parts.forEach((p) => {
+    let part = 0;
+    score.parts.forEach((p, pi) => {
       const idx = p.staves.map((_, i) => g + i);
-      if (!kb.length && (p.staves.length === 2 || ['piano', 'epiano', 'organ'].includes(p.instrument))) kb = idx;
+      if (!kb.length && (p.staves.length === 2 || ['piano', 'epiano', 'organ', 'harpsichord'].includes(p.instrument))) {
+        kb = idx;
+        part = pi;
+      }
       g += p.staves.length;
     });
     if (!kb.length) kb = [0];
-    return { kb, total: g, rh: kb[0], lh: kb[1] ?? kb[0] };
+    return { kb, part, total: g, rh: kb[0], lh: kb[1] ?? kb[0] };
   }, [score]);
+  // the parts as they sound here: the keyboard part can be given another instrument
+  const voice: InstrumentId = sound || score.parts[staffInfo.part]?.instrument || 'piano';
+  const soundParts = useMemo(() => score.parts.map((p, i) => (i === staffInfo.part ? { ...p, instrument: voice } : p)), [score.parts, staffInfo.part, voice]);
+  useEffect(() => engine.configureParts(soundParts), [soundParts]);
+  live.current.voice = voice;
   const userStaves = useMemo(() => {
     if (hands === 'none') return [];
     if (hands === 'both') return staffInfo.kb;
@@ -93,7 +128,14 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
 
   // a plan with every note (for highlighting / the keyboard) and one for what the app plays
   const visual = useMemo(() => buildPlan(score, { humanize: false, tremolo: false }), [score]);
-  const startTime = useMemo(() => (startMeasure !== undefined ? visual.measures.find((m) => m.measure === startMeasure)?.time ?? 0 : 0), [visual, startMeasure]);
+  // the stretch being practised: the whole piece, or a range of measures
+  const span = useMemo(() => sectionSpan(visual, from, to), [visual, from, to]);
+  const whole = from === 0 && to >= lastMeasure;
+  const spanRef = useRef(span);
+  spanRef.current = span;
+  useEffect(() => {
+    posRef.current = span.start;
+  }, [span.start]);
   const keyRange = useMemo(() => {
     const ms = visual.notes.map((n) => n.midi);
     if (!ms.length) return [48, 84];
@@ -119,11 +161,13 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
       }
     };
     void req();
+    nativeApp.post({ type: 'awake', on: true });
     const onVis = () => void req();
     document.addEventListener('visibilitychange', onVis);
     return () => {
       document.removeEventListener('visibilitychange', onVis);
       void lock?.release().catch(() => {});
+      nativeApp.post({ type: 'awake', on: false });
     };
   }, []);
 
@@ -160,6 +204,11 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
   }, []);
 
   const turn = useCallback((dir: 1 | -1) => {
+    if (look === 'original') return origRef.current?.turn(dir);
+    if (look === 'scroll') {
+      const sc = scrollRef.current;
+      return sc?.scrollBy({ left: dir * sc.clientWidth * 0.8, behavior: 'smooth' });
+    }
     const g = geometry();
     if (!g) return;
     const { sc, rows } = g;
@@ -173,7 +222,49 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
       const row = rows.find((r) => r.y >= target);
       sc.scrollTo({ top: row && target > 0 ? Math.max(0, row.y - 12) : 0, behavior: 'smooth' });
     }
-  }, [geometry]);
+  }, [geometry, look]);
+
+  // ---- side-scrolling: the music slides under a playhead that stays put ----
+  const origRef = useRef<OriginalHandle>(null);
+  const posRef = useRef(0);
+  const anchors = useRef<{ t: number; x: number }[] | null>(null);
+  useEffect(() => {
+    anchors.current = null;
+  }, [look, zoom, visual]);
+  const sideScroll = useCallback((pos: number) => {
+    const sc = scrollRef.current;
+    const host = sc?.querySelector('.score-host');
+    if (!sc || !host) return;
+    if (!anchors.current) {
+      // when each note sounds and where it is drawn, measured from the left edge of what scrolls
+      const xs = viewRef.current?.notePositions();
+      const off = host.getBoundingClientRect().left - sc.getBoundingClientRect().left + sc.scrollLeft;
+      const list: { t: number; x: number }[] = [];
+      for (const n of visual.notes) {
+        const x = xs?.get(n.eventId);
+        if (x === undefined) continue;
+        const last = list[list.length - 1];
+        if (last && n.time - last.t < 0.001) last.x = Math.min(last.x, x + off);
+        else list.push({ t: n.time, x: x + off });
+      }
+      if (!list.length) return;
+      anchors.current = list;
+    }
+    const a = anchors.current;
+    let lo = 0;
+    let hi = a.length - 1;
+    while (lo < hi) {
+      const mid = (lo + hi + 1) >> 1;
+      if (a[mid].t <= pos) lo = mid;
+      else hi = mid - 1;
+    }
+    const cur = a[lo];
+    const next = a[lo + 1];
+    let x = cur.x;
+    // glide to the next note, unless the music jumps back there (a repeat)
+    if (next && next.x > cur.x && pos > cur.t) x += (next.x - cur.x) * Math.min(1, (pos - cur.t) / (next.t - cur.t));
+    sc.scrollLeft = Math.max(0, x - sc.clientWidth * 0.3);
+  }, [visual]);
 
   const lastRow = useRef(-1);
   const follow = useCallback((measure: number | null) => {
@@ -193,6 +284,32 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
     if (rowHidden || nextHidden) sc.scrollTo({ top: Math.max(0, row.y - 12), behavior: 'smooth' });
   }, [geometry]);
 
+  // ---- your keyboard ----
+  useEffect(() => {
+    midiIn.onDevices = (names) => setMidiDevices(names);
+    void midiIn.autoConnect().then(setMidiDevices);
+    return () => {
+      midiIn.onDevices = null;
+    };
+  }, []);
+
+  const connectMidi = useCallback(async (): Promise<string[]> => {
+    try {
+      const d = await midiIn.connect();
+      setMidiDevices(d);
+      setStatus(d.length ? '' : midiIn.canBluetooth
+        ? 'No MIDI keyboard found – plug it in with a USB adapter, or pair it with “Bluetooth MIDI” in the settings here.'
+        : 'No MIDI keyboard found – plug it in (USB) or pair it (Bluetooth), or tap the on-screen keys.');
+      return d;
+    } catch (e) {
+      setStatus(`${(e as Error).message.replace(/\.$/, '')} – you can still tap the on-screen keys.`);
+      return [];
+    }
+  }, []);
+
+  // keys pressed in "Play along" flash green (in time) or red (not in the music just now)
+  const flash = useRef(new Map<number, { mark: KeyMark; t: number }>());
+
   // ---- running state shared by both modes ----
   const stopAll = useCallback(() => {
     engine.stop();
@@ -202,6 +319,9 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
     setMarks(new Map());
     setStatus('');
     lastRow.current = -1;
+    flash.current.clear();
+    posRef.current = spanRef.current.start;
+    origRef.current?.show(null, 0);
   }, []);
 
   useEffect(() => () => {
@@ -213,12 +333,12 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
     setLoading(true);
     try {
       await engine.init();
-      engine.configureParts(score.parts);
+      engine.configureParts(soundParts);
       await engine.ready();
     } finally {
       setLoading(false);
     }
-  }, [score.parts]);
+  }, [soundParts]);
 
   // highlight + keyboard for a score time
   const showAt = useCallback(
@@ -235,28 +355,79 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
       if (extra) for (const [k, v] of extra) m.set(k, v);
       const ms = plan.measures;
       let measure: number | null = null;
+      let through = 0;
       for (let i = ms.length - 1; i >= 0; i--)
         if (ms[i].time <= pos) {
           measure = pos < plan.duration ? ms[i].measure : null;
+          through = (pos - ms[i].time) / (ms[i].end - ms[i].time);
           break;
         }
+      posRef.current = pos;
       viewRef.current?.setPlaying(ids, measure, false);
-      follow(measure);
+      if (look === 'scroll') sideScroll(pos);
+      else if (look === 'original') origRef.current?.show(measure, through);
+      else follow(measure);
       return { marks: m, measure };
     },
-    [staffInfo, follow],
+    [staffInfo, follow, look, sideScroll],
   );
 
-  // ---- follow mode: engine plays, we highlight ----
+  // the notes you are expected to play, in the section being practised
+  const steps = useMemo(() => buildSteps(visual, userStaves, span.start, span.end), [visual, userStaves, span]);
+
+  // ---- the practice diary: how long each go lasted and how it went ----
+  const began = useRef(0);
+  const endSession = useCallback((percent?: number) => {
+    const seconds = began.current ? (performance.now() - began.current) / 1000 : 0;
+    began.current = 0;
+    if (seconds >= 15 && mode !== 'turn') logSession({ id: score.id, at: Date.now(), seconds: Math.round(seconds), mode, percent });
+  }, [score.id, mode]);
+  useEffect(() => {
+    if (running) began.current = performance.now();
+  }, [running]);
+  // leaving in the middle still counts as practice
+  const endRef = useRef(endSession);
+  endRef.current = endSession;
+  useEffect(() => () => endRef.current(), []);
+
+  // ---- follow mode: engine plays, we highlight and mark what you play on a MIDI keyboard ----
+  const followRun = useRef<{ plan: PlaybackPlan; tally: TimingScore; lap: number } | null>(null);
+
+  const playFollow = useCallback((withCountIn: boolean) => {
+    const run = followRun.current;
+    if (!run) return;
+    run.tally = new TimingScore(steps);
+    engine.play(run.plan, span.start, { speed: live.current.speed, metronome, countIn: withCountIn, loop: false }, []);
+  }, [steps, span.start, metronome]);
+
+  // the section (or the piece) is over: go round again, or stop and say how it went
+  const finishFollow = useCallback(() => {
+    const run = followRun.current;
+    const summary = run?.tally.presses ? tallyText(run.tally.result()) : '';
+    if (run && live.current.repeat) {
+      setStatus(summary && `Time ${run.lap}: ${summary}`);
+      run.lap++;
+      lastRow.current = -1;
+      playFollow(false);
+    } else {
+      endSession(run?.tally.presses ? run.tally.result().percent : undefined);
+      stopAll();
+      setStatus(summary);
+    }
+  }, [playFollow, stopAll, endSession]);
+  const finishRef = useRef(finishFollow);
+  finishRef.current = finishFollow;
+
   const startFollow = useCallback(async () => {
     await ensureAudio();
     const muted = accompany ? userStaves : Array.from({ length: staffInfo.total }, (_, i) => i);
     const plan = buildPlan(score, { humanize: settings.humanize, mutedStaves: muted });
-    engine.onEnd = () => stopAll();
+    followRun.current = { plan, tally: new TimingScore(steps), lap: 1 };
+    engine.onEnd = () => finishRef.current();
     engine.onStall = () => stopAll();
-    engine.play(plan, startTime, { speed, metronome, countIn, loop: false }, []);
+    playFollow(countIn);
     setRunning(true);
-  }, [ensureAudio, accompany, userStaves, staffInfo.total, score, settings.humanize, startTime, speed, metronome, countIn, stopAll]);
+  }, [ensureAudio, accompany, userStaves, staffInfo.total, score, settings.humanize, steps, playFollow, countIn, stopAll]);
 
   useEffect(() => {
     if (!running || mode !== 'follow') return;
@@ -264,7 +435,17 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
     let lastMarks = '';
     const tick = () => {
       const pos = engine.position();
-      const { marks: m } = showAt(pos, visual);
+      if (pos >= span.end - 0.02 && span.end < visual.duration - 0.05) {
+        finishRef.current();
+        if (!live.current.repeat) return;
+      }
+      const now = performance.now();
+      const extra = new Map<number, KeyMark>();
+      for (const [m, f] of flash.current) {
+        if (now - f.t < 350) extra.set(m, f.mark);
+        else flash.current.delete(m);
+      }
+      const { marks: m } = showAt(engine.position(), visual, extra);
       const sig = [...m].join();
       if (sig !== lastMarks) {
         lastMarks = sig;
@@ -274,34 +455,24 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [running, mode, showAt, visual]);
+  }, [running, mode, showAt, visual, span.end]);
+
+  useEffect(() => {
+    if (!running || mode !== 'follow' || !userStaves.length) return;
+    return midiIn.subscribe((e) => {
+      if (e.type !== 'on') return;
+      const r = followRun.current?.tally.press(e.midi, engine.position(), IN_TIME * live.current.speed);
+      if (r) flash.current.set(e.midi, { mark: r === 'hit' ? 'good' : 'wrong', t: performance.now() });
+    });
+  }, [running, mode, userStaves]);
 
   // ---- wait mode: a clock that stops at each of your notes until you play them ----
-  const steps = useMemo<Step[]>(() => {
-    const out: Step[] = [];
-    for (const n of visual.notes) {
-      if (!userStaves.includes(n.staff)) continue;
-      const last = out[out.length - 1];
-      if (last && Math.abs(last.time - n.time) < 0.02) {
-        if (!last.midis.includes(n.midi)) last.midis.push(n.midi);
-        if (n.eventId && !last.ids.includes(n.eventId)) last.ids.push(n.eventId);
-      } else out.push({ time: n.time, midis: [n.midi], ids: n.eventId ? [n.eventId] : [] });
-    }
-    return out;
-  }, [visual, userStaves]);
-
-  const waitState = useRef({ vt: 0, k: 0, pressed: new Map<number, number>(), wrong: new Map<number, number>() });
+  const waitState = useRef({ vt: 0, k: 0, pressed: new Map<number, number>(), wrong: new Map<number, number>(), slipped: false, clean: 0, lap: 1 });
 
   const startWait = useCallback(async () => {
     await ensureAudio();
     if (input === 'midi') {
-      try {
-        const d = await midiIn.connect();
-        setMidiDevices(d);
-        if (!d.length) setStatus('No MIDI keyboard found – connect one (USB or Bluetooth), or tap the on-screen keys.');
-      } catch (e) {
-        setStatus(`${(e as Error).message.replace(/\.$/, '')} – you can still tap the on-screen keys.`);
-      }
+      if (!midiIn.devices.length) await connectMidi();
     } else if (!micRef.current) {
       try {
         const mic = new MicListener();
@@ -313,13 +484,15 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
       }
     }
     const st = waitState.current;
-    st.vt = startTime;
-    st.k = steps.findIndex((s) => s.time >= startTime - 0.001);
-    if (st.k < 0) st.k = steps.length;
+    st.vt = span.start;
+    st.k = 0;
     st.pressed.clear();
+    st.slipped = false;
+    st.clean = 0;
+    st.lap = 1;
     micRef.current?.resetOnset();
     setRunning(true);
-  }, [ensureAudio, input, steps, startTime]);
+  }, [ensureAudio, input, connectMidi, span.start]);
 
   useEffect(() => {
     if (!running || mode !== 'wait') return;
@@ -328,11 +501,17 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
       if (e.type !== 'on') return;
       st.pressed.set(e.midi, performance.now());
       const step = steps[st.k];
-      if (step && !step.midis.includes(e.midi)) st.wrong.set(e.midi, performance.now());
+      if (step && !step.midis.includes(e.midi)) {
+        st.wrong.set(e.midi, performance.now());
+        st.slipped = true;
+      }
     });
     const autoNotes: PlayNote[] = accompany ? visual.notes.filter((n) => !userStaves.includes(n.staff) && n.part >= 0) : [];
-    let ai = autoNotes.findIndex((n) => n.time >= st.vt - 0.001);
-    if (ai < 0) ai = autoNotes.length;
+    const firstFrom = (t: number) => {
+      const i = autoNotes.findIndex((n) => n.time >= t - 0.001);
+      return i < 0 ? autoNotes.length : i;
+    };
+    let ai = firstFrom(st.vt);
     let last = performance.now();
     let raf = 0;
     let lastSig = '';
@@ -355,6 +534,8 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
       if (step && satisfied) {
         st.vt = Math.max(st.vt, step.time);
         st.k++;
+        if (!st.slipped) st.clean++;
+        st.slipped = false;
         st.pressed.clear();
         micRef.current?.resetOnset();
       } else if (step && st.vt + dt >= step.time) {
@@ -382,10 +563,25 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
         setMarks(mk);
         setYouPlay(next ? next.midis.map(toneName).join(' ') : null);
       }
-      if (!next && st.vt >= visual.duration) {
-        stopAll();
-        setStatus('Well played! 🎉');
-        return;
+      if (!next && st.vt >= span.end) {
+        const summary = input === 'midi' && steps.length ? ` ${st.clean} of ${steps.length} right first time.` : '';
+        if (!live.current.repeat) {
+          endSession(input === 'midi' && steps.length ? Math.round((st.clean / steps.length) * 100) : undefined);
+          stopAll();
+          setStatus(`Well played! 🎉${summary}`);
+          return;
+        }
+        // go round again
+        setStatus(`Time ${st.lap}:${summary || ' done.'}`);
+        st.lap++;
+        st.vt = span.start;
+        st.k = 0;
+        st.clean = 0;
+        st.slipped = false;
+        st.pressed.clear();
+        ai = firstFrom(st.vt);
+        bi = beats.findIndex((b) => b.t >= st.vt - 0.001);
+        lastRow.current = -1;
       }
       raf = requestAnimationFrame(tick);
     };
@@ -394,23 +590,54 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
       cancelAnimationFrame(raf);
       unsub();
     };
-  }, [running, mode, steps, speed, input, accompany, visual, userStaves, metronome, showAt, stopAll]);
+  }, [running, mode, steps, span, speed, input, accompany, visual, userStaves, metronome, showAt, stopAll, endSession]);
 
-  // chord readout for what you're holding on a MIDI keyboard
+  // the keys you're holding, the chord they make, and (if asked for) their sound
   const [heldChord, setHeldChord] = useState<string | null>(null);
+  const thruAudio = useRef(false);
   useEffect(() => {
-    return midiIn.subscribe(() => setHeldChord(chordFromMidis([...midiIn.held], score.key)));
-  }, [score.key]);
+    return midiIn.subscribe((e) => {
+      setHeld(new Set(midiIn.held));
+      setHeldChord(chordFromMidis([...midiIn.held], score.key));
+      if (!live.current.thru || e.type !== 'on' || e.source !== 'device') return;
+      if (!thruAudio.current) {
+        thruAudio.current = true;
+        void ensureAudio().catch(() => undefined);
+      }
+      engine.playKey(e.midi, e.velocity, live.current.voice);
+    });
+  }, [score.key, ensureAudio]);
+  const shownMarks = useMemo(() => {
+    if (!held.size) return marks;
+    const m = new Map(marks);
+    for (const k of held) if (!m.has(k)) m.set(k, 'held');
+    return m;
+  }, [marks, held]);
+
+  const setSection = (a: number, b: number) => {
+    if (Number.isNaN(a) || Number.isNaN(b)) return;
+    stopAll();
+    const f = Math.min(Math.max(0, a), lastMeasure);
+    setFrom(f);
+    setTo(Math.min(Math.max(f, b), lastMeasure));
+  };
 
   const toggleRun = useCallback(() => {
     if (running) {
+      // stopped part-way through: say how it was going
+      const run = mode === 'follow' ? followRun.current : null;
+      const sofar = run?.tally.presses ? run.tally.result(engine.position()) : null;
+      const summary = sofar ? tallyText(sofar) : '';
+      const done = waitState.current;
+      endSession(sofar ? sofar.percent : mode === 'wait' && input === 'midi' && done.k > 3 ? Math.round((done.clean / done.k) * 100) : undefined);
       stopAll();
+      setStatus(summary);
       return;
     }
     setStatus('');
     if (mode === 'follow') void startFollow();
     else if (mode === 'wait') void startWait();
-  }, [running, mode, startFollow, startWait, stopAll]);
+  }, [running, mode, input, startFollow, startWait, stopAll, endSession]);
 
   // ---- keyboard: pedals send arrows / PageDown ----
   useEffect(() => {
@@ -447,6 +674,13 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
     } else if (midiIn.held.has(midi)) midiIn.emit('off', midi);
   }, []);
 
+  const zoomBy = (d: number) => {
+    if (look === 'original') setOrigScale((z) => Math.min(3, Math.max(0.4, +(z + d).toFixed(2))));
+    else setZoom((z) => Math.min(2.5, Math.max(0.4, +(z + d).toFixed(2))));
+  };
+  const handOf = useCallback((n: PlayNote) => (n.staff === staffInfo.rh ? 'rh' : n.staff === staffInfo.lh && staffInfo.lh !== staffInfo.rh ? 'lh' : 'other'), [staffInfo]);
+  const isMine = useCallback((n: PlayNote) => userStaves.includes(n.staff), [userStaves]);
+  const now = useCallback(() => posRef.current, []);
   const fs = typeof document !== 'undefined' && document.fullscreenEnabled;
   const handsLabel = { both: 'Both hands', rh: 'Right hand', lh: 'Left hand', none: 'Just listen' }[hands];
 
@@ -456,11 +690,16 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
         <button className="icon-btn" onClick={onExit} aria-label="Exit play-along"><Icon.back /></button>
         <div className="perform-title">
           <span className="t">{score.title}</span>
-          <span className="s">{mode === 'turn' ? 'Page turning' : `${mode === 'wait' ? 'Waits for you' : 'Plays along'} · ${handsLabel}`}</span>
+          <span className="s">{mode === 'turn' ? 'Page turning' : `${mode === 'wait' ? 'Waits for you' : 'Plays along'} · ${handsLabel}${whole ? '' : ` · measures ${from + 1}–${to + 1}`}`}</span>
         </div>
         <span className="grow" />
-        <button className="icon-btn" onClick={() => setZoom((z) => Math.max(0.4, +(z - 0.1).toFixed(2)))} aria-label="Smaller"><Icon.zoomOut /></button>
-        <button className="icon-btn" onClick={() => setZoom((z) => Math.min(2.5, +(z + 0.1).toFixed(2)))} aria-label="Bigger"><Icon.zoomIn /></button>
+        {midiIn.supported && mode !== 'turn' && (
+          <button className={`midi-chip ${midiDevices.length ? 'on' : ''}`} onClick={() => void connectMidi()} title={midiDevices.length ? `Connected: ${midiDevices.join(', ')}` : 'Connect a MIDI keyboard'}>
+            <span className="dot" /><span className="name">{midiDevices.length ? midiDevices[0] : 'Connect keyboard'}</span>
+          </button>
+        )}
+        <button className="icon-btn" onClick={() => zoomBy(-0.1)} disabled={look === 'falling'} aria-label="Smaller"><Icon.zoomOut /></button>
+        <button className="icon-btn" onClick={() => zoomBy(0.1)} disabled={look === 'falling'} aria-label="Bigger"><Icon.zoomIn /></button>
         {fs && (
           <button className="icon-btn hide-xs" onClick={() => (document.fullscreenElement ? document.exitFullscreen() : document.documentElement.requestFullscreen())} aria-label="Full screen">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5" /></svg>
@@ -481,6 +720,23 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
               ))}
             </div>
           </div>
+          <div className="pp-row">
+            <span className="mini">View</span>
+            <div className="seg compact wrap">
+              {LOOKS.map((l) => (
+                <button key={l.id} className={look === l.id ? 'on' : ''} onClick={() => setLook(l.id)}>{l.label}</button>
+              ))}
+            </div>
+          </div>
+          {mode !== 'turn' && (
+            <div className="pp-row">
+              <label className="mini" htmlFor="psound">Sound</label>
+              <select id="psound" value={sound} onChange={(e) => setSound(e.target.value as InstrumentId | '')}>
+                <option value="">As written ({INSTRUMENTS.find((i) => i.id === score.parts[staffInfo.part]?.instrument)?.label ?? 'Grand piano'})</option>
+                {INSTRUMENTS.map((i) => <option key={i.id} value={i.id}>{i.label}</option>)}
+              </select>
+            </div>
+          )}
           {mode !== 'turn' && (
             <div className="pp-row">
               <span className="mini">You play</span>
@@ -505,8 +761,30 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
               </div>
             </div>
           )}
-          {mode === 'wait' && input === 'midi' && (
-            <p className="hint">{midiIn.supported ? (midiDevices.length ? `Connected: ${midiDevices.join(', ')}` : 'Plug in your digital piano (USB or Bluetooth MIDI), then press Start.') : 'This browser can’t use MIDI keyboards (iPhone/iPad Safari). Use Chrome on a computer or Android, or the microphone.'}</p>
+          {mode !== 'turn' && (
+            <div className="pp-row">
+              <span className="mini">Measures</span>
+              <input type="number" min={1} max={lastMeasure + 1} value={from + 1} onFocus={(e) => e.target.select()} onChange={(e) => setSection(e.target.valueAsNumber - 1, to)} aria-label="First measure" />
+              <span>to</span>
+              <input type="number" min={from + 1} max={lastMeasure + 1} value={to + 1} onFocus={(e) => e.target.select()} onChange={(e) => setSection(from, e.target.valueAsNumber - 1)} aria-label="Last measure" />
+              {!whole && <button className="link" onClick={() => setSection(0, lastMeasure)}>Whole piece</button>}
+              <label className="check"><input type="checkbox" checked={repeat} onChange={(e) => setRepeat(e.target.checked)} /> Repeat</label>
+            </div>
+          )}
+          {mode !== 'turn' && (mode === 'follow' || input === 'midi') && (
+            <p className="hint">
+              {!midiIn.supported
+                ? 'This browser can’t use MIDI keyboards (Safari, and every browser on iPhone and iPad). Use Chrome or Edge on a computer or Android, or the Sheet Music Player app on iPhone, iPad and Mac.'
+                : midiDevices.length
+                  ? `Connected: ${midiDevices.join(', ')}.${mode === 'follow' && hands !== 'none' ? ' Play in time with the app and it tells you how many notes you got.' : ''}`
+                  : `Plug in your digital piano (USB or Bluetooth MIDI)${mode === 'wait' ? ', then press Start.' : ' to have your playing marked.'}`}
+            </p>
+          )}
+          {mode !== 'turn' && midiIn.supported && (
+            <div className="pp-row">
+              <label className="check"><input type="checkbox" checked={thru} onChange={(e) => setThru(e.target.checked)} /> Play my keys through this device</label>
+              {midiIn.canBluetooth && <button className="btn sm" onClick={() => midiIn.bluetooth()}>Bluetooth MIDI…</button>}
+            </div>
           )}
           {mode === 'wait' && input === 'mic' && (
             <p className="hint">Experimental: works best on a quiet room with an in-tune piano. {accompany ? 'Use headphones so the app’s sound doesn’t confuse the listener.' : ''}</p>
@@ -519,15 +797,28 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
               ))}
             </div>
           </div>
-          <label className="check"><input type="checkbox" checked={showKeys} onChange={(e) => setShowKeys(e.target.checked)} /> Show piano keys</label>
+          {look !== 'falling' && <label className="check"><input type="checkbox" checked={showKeys} onChange={(e) => setShowKeys(e.target.checked)} /> Show piano keys</label>}
           <p className="hint">Turn pages by tapping the left or right side of the music, with the arrow keys, or with a Bluetooth page-turner pedal.</p>
         </div>
       )}
 
-      <div className="perform-scroll" ref={scrollRef}>
-        <div className="perform-tap" onClick={onTap}>
-          <ScoreView ref={viewRef} score={score} zoom={zoom} selection={null} onSelect={() => {}} editMode={false} paper={paper} passive />
-        </div>
+      <div className={`perform-stage look-${look}`}>
+        {look === 'falling' ? (
+          <div className="perform-fall" onClick={() => setControls((c) => !c)}>
+            <FallingNotes notes={visual.notes} measures={visual.measures} low={keyRange[0]} high={keyRange[1]} time={now} hand={handOf} mine={isMine} />
+          </div>
+        ) : (
+          <div className="perform-scroll" ref={scrollRef}>
+            <div className="perform-tap" onClick={onTap}>
+              {look === 'original' ? (
+                <OriginalPages ref={origRef} scoreId={score.id} total={score.measures.length} scale={origScale} scroller={scrollRef} />
+              ) : (
+                <ScoreView ref={viewRef} score={score} zoom={zoom} selection={null} onSelect={() => {}} editMode={false} paper={paper} passive singleLine={look === 'scroll'} onRendered={() => { anchors.current = null; }} />
+              )}
+            </div>
+          </div>
+        )}
+        {look === 'scroll' && <div className="playhead" />}
       </div>
 
       <footer className={`perform-bottom ${controls || !running ? '' : 'faded'}`}>
@@ -538,7 +829,7 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
             {running && mode === 'wait' && input === 'mic' && <span className="mic-meter"><span style={{ width: `${Math.round(micLevel * 100)}%` }} /></span>}
           </div>
         )}
-        {showKeys && <PianoKeyboard low={keyRange[0]} high={keyRange[1]} marks={marks} onPress={onScreenKey} labels={!running || mode === 'wait'} />}
+        {(showKeys || look === 'falling') && <PianoKeyboard low={keyRange[0]} high={keyRange[1]} marks={shownMarks} onPress={onScreenKey} labels={!running || mode === 'wait'} />}
         <div className="perform-transport">
           {mode !== 'turn' ? (
             <button className="play-btn" onClick={toggleRun} disabled={loading} aria-label={running ? 'Stop' : 'Start'}>

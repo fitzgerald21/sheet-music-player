@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Icon } from './Icons';
 import { prepareImage, PreparedImage } from '../omr/image';
 import { extrasConfig, scanPages } from '../omr/client';
-import { TranscribeProgress } from '../omr/transcribe';
+import { PageImage, TranscribeProgress } from '../omr/transcribe';
 import { Score } from '../model/types';
 import { Settings } from '../storage';
 
@@ -17,7 +17,8 @@ interface PageItem {
 interface Props {
   settings: Settings;
   onSettings: (s: Settings) => void;
-  onDone: (scores: Score[]) => void;
+  /** the scores, and for each the page images it was read from */
+  onDone: (scores: Score[], images: PageImage[][]) => void;
   onCancel: () => void;
   onNeedKey: () => void;
   initialFiles?: File[];
@@ -138,7 +139,7 @@ export function ScanView({ settings, onSettings, onDone, onCancel, onNeedKey, in
         // reading on the device is heavy: one piece at a time
         for (const group of groups) scores.push(await scanGroup(group));
       } else scores = await Promise.all(groups.map(scanGroup));
-      onDone(scores);
+      onDone(scores, groups.map((g) => g.map((p) => p.prepared!.image)));
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       if (msg === 'NO_KEY') {

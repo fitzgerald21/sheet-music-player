@@ -10,6 +10,10 @@ import { AssistantError, Mark, Turn, applyAnswer, askAssistant, assistantConfig,
 import { ChordsPanel, InfoPanel, MeasurePanel, PartsPanel, SettingsPanel, TransposePanel, Sheet } from './Panels';
 import { PrintView } from './PrintView';
 import { PerformView } from './PerformView';
+import { nativeApp } from '../native';
+import { applyTheme } from '../theme';
+import { summarize } from '../practiceLog';
+import { base64Page, deletePages, savePages } from '../pages';
 import { FindMusic } from './FindMusic';
 import { importFile as importAnyFile } from '../importers';
 import { useScoreStore } from './useScoreStore';
@@ -33,6 +37,7 @@ type Panel = null | 'parts' | 'transpose' | 'info' | 'settings' | 'measure' | 'e
 type PlayState = 'stopped' | 'playing' | 'paused';
 
 function download(name: string, data: BlobPart, type: string) {
+  if (nativeApp.available) return nativeApp.save(name, new Blob([data], { type }));
   const url = URL.createObjectURL(new Blob([data], { type }));
   const a = document.createElement('a');
   a.href = url;
@@ -96,6 +101,10 @@ export function App() {
       setAudiveris(i.audiveris);
     });
   }, []);
+
+  useEffect(() => applyTheme(settings.theme), [settings.theme]);
+  // the practice diary is added to in play-along, so read it again whenever the library comes back
+  const practice = useMemo(() => summarize(), [view, library]);
 
   const setSettings = useCallback((s: Settings) => {
     setSettingsState(s);
@@ -644,9 +653,13 @@ export function App() {
           onSettings={setSettings}
           onCancel={() => { setScanFiles(undefined); setView(score ? 'score' : 'library'); }}
           onNeedKey={() => setPanel('settings')}
-          onDone={(scores) => {
+          onDone={(scores, images) => {
             setScanFiles(undefined);
-            scores.forEach((s) => saveScore(s));
+            scores.forEach((s, i) => {
+              saveScore(s);
+              // keep the pages, so play-along can follow the music on them
+              void savePages(s.id, (images[i] ?? []).map((im) => base64Page(im.data, im.mediaType)));
+            });
             setLibrary(listLibrary());
             openScore(scores[0]);
             if (scores.length > 1) flash(`${scores.length} pieces saved to your library`);
@@ -676,6 +689,7 @@ export function App() {
       <>
         <Library
           entries={library}
+          practice={practice}
           needsKey={settings.engine === 'local' ? false : settings.engine === 'claude' ? !serverKey && !settings.apiKey : settings.engine === 'compat' ? !settings.compatKey : !audiveris}
           onFind={() => setView('find')}
           onOpen={(id) => {
@@ -685,6 +699,7 @@ export function App() {
           }}
           onDelete={(id) => {
             deleteScore(id);
+            void deletePages(id);
             setLibrary(listLibrary());
           }}
           onScan={() => { setScanFiles(undefined); setView('scan'); }}
