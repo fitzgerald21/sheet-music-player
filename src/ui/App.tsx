@@ -682,7 +682,7 @@ export function App() {
   if (view === 'print' && score) return <PrintView score={shown ?? score} onBack={() => setView('score')} />;
 
   if (view === 'perform' && score)
-    return <PerformView score={shown ?? score} settings={settings} startMeasure={sel?.m0} onExit={() => setView('score')} />;
+    return <PerformView score={shown ?? score} settings={settings} onSettings={setSettings} startMeasure={sel?.m0} onExit={() => setView('score')} />;
 
   if (view === 'library' || !score) {
     return (
@@ -751,6 +751,7 @@ export function App() {
               <button onClick={() => { setMoreOpen(false); setPanel('chords'); }}><Icon.music size={16} /> Chord symbols…</button>
               <button role="menuitemcheckbox" aria-checked={settings.showChords} onClick={() => setSettings({ ...settings, showChords: !settings.showChords })}><span className="menu-tick">{settings.showChords ? '✓' : ''}</span> Show chord symbols</button>
               <button role="menuitemcheckbox" aria-checked={settings.showLyrics} onClick={() => setSettings({ ...settings, showLyrics: !settings.showLyrics })}><span className="menu-tick">{settings.showLyrics ? '✓' : ''}</span> Show lyrics</button>
+              <button role="menuitemcheckbox" aria-checked={settings.noteNames.on} onClick={() => setSettings({ ...settings, noteNames: { ...settings.noteNames, on: !settings.noteNames.on } })}><span className="menu-tick">{settings.noteNames.on ? '✓' : ''}</span> Name far-off notes</button>
               <div className="menu-sep" />
               <button onClick={() => exportAs('musicxml')}><Icon.download size={16} /> Export MusicXML</button>
               <button onClick={() => exportAs('midi')}><Icon.download size={16} /> Export MIDI</button>
@@ -798,7 +799,7 @@ export function App() {
       )}
 
       <main className="score-scroll">
-        <ScoreView ref={viewRef} score={shown ?? score} zoom={zoom} selection={sel} onSelect={onSelect} editMode={editMode || assistOpen} marks={assistOpen ? marks : undefined} changed={changed} />
+        <ScoreView ref={viewRef} score={shown ?? score} zoom={zoom} selection={sel} onSelect={onSelect} editMode={editMode || assistOpen} marks={assistOpen ? marks : undefined} changed={changed} noteNames={settings.noteNames} />
       </main>
 
       {assistOpen && (

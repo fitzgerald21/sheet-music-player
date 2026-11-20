@@ -32,6 +32,7 @@ const LOOKS: { id: Look; label: string }[] = [
 interface Props {
   score: Score;
   settings: Settings;
+  onSettings: (s: Settings) => void;
   startMeasure?: number;
   onExit: () => void;
 }
@@ -49,7 +50,7 @@ function loadPrefs() {
   }
 }
 
-export function PerformView({ score, settings, startMeasure, onExit }: Props) {
+export function PerformView({ score, settings, onSettings, startMeasure, onExit }: Props) {
   const prefs = useMemo(loadPrefs, []);
   const [mode, setMode] = useState<Mode>(prefs.mode ?? 'follow');
   const [hands, setHands] = useState<Hands>(prefs.hands ?? 'rh');
@@ -797,6 +798,9 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
               ))}
             </div>
           </div>
+          {(look === 'pages' || look === 'scroll') && (
+            <label className="check"><input type="checkbox" checked={settings.noteNames.on} onChange={(e) => onSettings({ ...settings, noteNames: { ...settings.noteNames, on: e.target.checked } })} /> Name notes far off the staff (more in Settings)</label>
+          )}
           {look !== 'falling' && <label className="check"><input type="checkbox" checked={showKeys} onChange={(e) => setShowKeys(e.target.checked)} /> Show piano keys</label>}
           <p className="hint">Turn pages by tapping the left or right side of the music, with the arrow keys, or with a Bluetooth page-turner pedal.</p>
         </div>
@@ -813,7 +817,7 @@ export function PerformView({ score, settings, startMeasure, onExit }: Props) {
               {look === 'original' ? (
                 <OriginalPages ref={origRef} scoreId={score.id} total={score.measures.length} scale={origScale} scroller={scrollRef} />
               ) : (
-                <ScoreView ref={viewRef} score={score} zoom={zoom} selection={null} onSelect={() => {}} editMode={false} paper={paper} passive singleLine={look === 'scroll'} onRendered={() => { anchors.current = null; }} />
+                <ScoreView ref={viewRef} score={score} zoom={zoom} selection={null} onSelect={() => {}} editMode={false} paper={paper} passive singleLine={look === 'scroll'} onRendered={() => { anchors.current = null; }} noteNames={settings.noteNames} />
               )}
             </div>
           </div>

@@ -140,6 +140,14 @@ button:disabled { cursor: default; opacity: 0.38; }
 .smp-note.selected path, .smp-note.selected rect { fill: #2f56d6 !important; stroke: #2f56d6 !important; }
 .smp-note.selected .smp-notehead-selected path { fill: #e03a8c !important; stroke: #e03a8c !important; }
 .smp-note.marked path, .smp-note.marked rect, .smp-notehead-marked path { fill: #c2410c !important; stroke: #c2410c !important; }
+.smp-name {
+  fill: #6a3fc1; stroke: var(--paper); paint-order: stroke; stroke-linejoin: round;
+  font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; font-weight: 650; dominant-baseline: central;
+}
+.smp-note.playing .smp-name { fill: var(--play); }
+.smp-note.target .smp-name { fill: #1f9d55; }
+.paper-cream .smp-name { stroke: #f8f1e1; }
+.paper-dark .smp-name { stroke: #fff; }
 .mark-box, .changed-box { position: absolute; pointer-events: none; border-radius: 6px; }
 .mark-box { background: rgba(234, 108, 20, 0.1); border: 2px solid rgba(234, 108, 20, 0.75); }
 .changed-box { background: rgba(22, 163, 74, 0.1); border: 2px solid rgba(22, 163, 74, 0.6); animation: changed-fade 8s forwards; }

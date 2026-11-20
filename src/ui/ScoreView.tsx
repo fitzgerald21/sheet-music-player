@@ -1,6 +1,7 @@
-import { useEffect, useImperativeHandle, useRef, useState, forwardRef } from 'react';
+import { useEffect, useImperativeHandle, useMemo, useRef, useState, forwardRef } from 'react';
 import { OpenSheetMusicDisplay } from 'opensheetmusicdisplay';
 import { toMusicXML } from '../model/musicxml';
+import { NoteNameOptions, noteNames as nameNotes } from '../model/noteNames';
 import { Score } from '../model/types';
 import type { Mark } from '../ai/assistant';
 
@@ -41,6 +42,8 @@ interface Props {
   marks?: Mark[];
   /** measures the assistant just changed */
   changed?: number[];
+  /** letter names next to notes far above or below the staff */
+  noteNames?: NoteNameOptions;
 }
 
 interface MeasureBox {
@@ -52,7 +55,7 @@ interface MeasureBox {
 
 const UNIT = 10;
 
-export const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ score, zoom, selection, onSelect, onRendered, editMode, paper, passive, singleLine, marks, changed }, ref) {
+export const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({ score, zoom, selection, onSelect, onRendered, editMode, paper, passive, singleLine, marks, changed, noteNames }, ref) {
   const hostRef = useRef<HTMLDivElement>(null);
   const osmdRef = useRef<OpenSheetMusicDisplay | null>(null);
   const elemsRef = useRef(new Map<string, SVGGElement[]>());
@@ -259,6 +262,41 @@ export const ScoreView = forwardRef<ScoreViewHandle, Props>(function ScoreView({
       else if (gs[0]) noteheads(gs[0])[mk.pitchIdx]?.classList.add('smp-notehead-marked');
     }
   }, [marks, renderTick]);
+
+  // letter names next to notes far off the staff, drawn into the note's own group so they zoom,
+  // highlight and take taps along with it
+  const names = useMemo(() => (noteNames ? nameNotes(score, noteNames) : new Map()), [score, noteNames]);
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    host.querySelectorAll('.smp-name').forEach((t) => t.remove());
+    for (const [id, list] of names) {
+      const g = elemsRef.current.get(id)?.[0];
+      if (!g) continue;
+      const heads = noteheads(g) as SVGGraphicsElement[];
+      // start right of the whole chord: a note a step away is drawn beside the stem, not in line
+      const right = Math.max(...heads.map((h) => { const b = h.getBBox(); return b.x + b.width; }));
+      let below = Infinity;
+      for (const n of list) {
+        const head = heads[n.rank];
+        if (!head) continue;
+        const b = head.getBBox();
+        const size = b.height * 1.3;
+        const x = right + b.height * 0.4;
+        // names come lowest first; one a step above the last would overlap it, so lift it clear
+        const y = Math.min(b.y + b.height / 2, below - size * 0.9);
+        below = y;
+        const t = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+        t.setAttribute('class', 'smp-name');
+        t.setAttribute('x', String(x));
+        t.setAttribute('y', String(y));
+        t.setAttribute('font-size', String(size));
+        t.setAttribute('stroke-width', String(size * 0.22));
+        t.textContent = n.text;
+        g.appendChild(t);
+      }
+    }
+  }, [names, renderTick]);
 
   // bring what the assistant changed into view
   useEffect(() => {

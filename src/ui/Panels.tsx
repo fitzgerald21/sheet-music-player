@@ -5,6 +5,7 @@ import { Clef, InstrumentId, Measure, Navigation, Score, cloneScore } from '../m
 import { INTERVAL_NAMES, octaveShift, transposeScore } from '../model/transpose';
 import { keyName, transposeKey, keyTonicPitchClass } from '../model/pitch';
 import { Settings, Engine } from '../storage';
+import type { NoteNameOptions } from '../model/noteNames';
 import { THEMES } from '../theme';
 import { COMPAT_PRESETS } from '../omr/openaiCompat';
 import { DEFAULT_EXTRAS_MODEL } from '../omr/annotate';
@@ -299,6 +300,8 @@ export function MeasurePanel({ score, m0, m1, onUpdate, onInsert, onDelete, onCl
 export function SettingsPanel({ settings, onChange, onClose, serverKey, audiveris }: { settings: Settings; onChange: (s: Settings) => void; onClose: () => void; serverKey: boolean; audiveris?: boolean }) {
   const [show, setShow] = useState(false);
   const preset = COMPAT_PRESETS.find((p) => p.id === settings.compatPreset) ?? COMPAT_PRESETS[0];
+  const names = settings.noteNames;
+  const setNames = (n: Partial<NoteNameOptions>) => onChange({ ...settings, noteNames: { ...names, ...n } });
   return (
     <Sheet title="Settings" onClose={onClose}>
       <h3 className="sub-h">Appearance</h3>
@@ -418,6 +421,30 @@ export function SettingsPanel({ settings, onChange, onClose, serverKey, audiveri
       <h3 className="sub-h">Display</h3>
       <label className="check"><input type="checkbox" checked={settings.showChords} onChange={(e) => onChange({ ...settings, showChords: e.target.checked })} /> Show chord symbols</label>
       <label className="check"><input type="checkbox" checked={settings.showLyrics} onChange={(e) => onChange({ ...settings, showLyrics: e.target.checked })} /> Show lyrics</label>
+      <label className="check"><input type="checkbox" checked={names.on} onChange={(e) => setNames({ on: e.target.checked })} /> Write the letter name next to notes far above or below the staff</label>
+      {names.on && (
+        <>
+          <div className="field-grid">
+            <div className="field">
+              <label htmlFor="nn-ledger">Which notes</label>
+              <select id="nn-ledger" value={names.ledger} onChange={(e) => setNames({ ledger: Number(e.target.value) })}>
+                {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n} ledger line{n > 1 ? 's' : ''} or more off the staff</option>)}
+                <option value={0}>Every note</option>
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="nn-staves">On</label>
+              <select id="nn-staves" value={names.staves} onChange={(e) => setNames({ staves: e.target.value as NoteNameOptions['staves'] })}>
+                <option value="all">Both staves</option>
+                <option value="treble">Treble clef only</option>
+                <option value="bass">Bass clef only</option>
+              </select>
+            </div>
+          </div>
+          <label className="check"><input type="checkbox" checked={names.octave} onChange={(e) => setNames({ octave: e.target.checked })} /> Add the octave number (C6 instead of C; middle C is C4)</label>
+          <p className="hint">Ledger lines are the short lines drawn above or below the staff. Notes under an 8va line are counted where they’re drawn.</p>
+        </>
+      )}
       <h3 className="sub-h">About</h3>
       <p className="hint">Piano samples: Salamander Grand Piano by Alexander Holm (CC BY 3.0). Notation rendering: OpenSheetMusicDisplay. Sound: Tone.js. On-device music reading: homr by Christian Liebhardt and contributors (AGPL-3.0), run with Pyodide and ONNX Runtime.</p>
     </Sheet>

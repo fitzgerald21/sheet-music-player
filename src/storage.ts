@@ -1,6 +1,7 @@
 import { Score } from './model/types';
 import { Effort } from './omr/transcribe';
 import type { ThemeId } from './theme';
+import type { NoteNameOptions } from './model/noteNames';
 
 const INDEX_KEY = 'smp.library.v1';
 const SCORE_KEY = (id: string) => `smp.score.v1.${id}`;
@@ -81,6 +82,8 @@ export interface Settings {
   /** Draw chord symbols / lyrics on the score. */
   showChords: boolean;
   showLyrics: boolean;
+  /** Letter names next to notes far above or below the staff. */
+  noteNames: NoteNameOptions;
   compatPreset: string;
   compatBaseUrl: string;
   compatKey: string;
@@ -106,6 +109,7 @@ export const DEFAULT_SETTINGS: Settings = {
   extrasMarks: true,
   showChords: true,
   showLyrics: true,
+  noteNames: { on: false, ledger: 3, staves: 'all', octave: false },
   compatPreset: 'openrouter',
   compatBaseUrl: 'https://openrouter.ai/api/v1',
   compatKey: '',
@@ -122,7 +126,8 @@ export const DEFAULT_SETTINGS: Settings = {
 
 export function loadSettings(): Settings {
   try {
-    return { ...DEFAULT_SETTINGS, ...JSON.parse(safeGet(SETTINGS_KEY) ?? '{}') };
+    const saved = JSON.parse(safeGet(SETTINGS_KEY) ?? '{}');
+    return { ...DEFAULT_SETTINGS, ...saved, noteNames: { ...DEFAULT_SETTINGS.noteNames, ...saved.noteNames } };
   } catch {
     return DEFAULT_SETTINGS;
   }
