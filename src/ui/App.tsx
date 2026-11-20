@@ -679,7 +679,7 @@ export function App() {
     );
   }
 
-  if (view === 'print' && score) return <PrintView score={shown ?? score} onBack={() => setView('score')} />;
+  if (view === 'print' && score) return <PrintView score={shown ?? score} noteNames={settings.noteNames} onBack={() => setView('score')} />;
 
   if (view === 'perform' && score)
     return <PerformView score={shown ?? score} settings={settings} onSettings={setSettings} startMeasure={sel?.m0} onExit={() => setView('score')} />;

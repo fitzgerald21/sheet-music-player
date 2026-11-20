@@ -7,8 +7,11 @@ import { Clef, Pitch, Score, STEPS } from './types';
 
 export interface NoteNameOptions {
   on: boolean;
-  /** name notes with at least this many ledger lines; 0 = every note */
-  ledger: number;
+  /**
+   * name notes at least this many lines and spaces past the outer staff line, so 2 = on the first
+   * ledger line, 3 = in the space past it, 4 = on the second; 0 = every note
+   */
+  steps: number;
   /** which staves to name: every staff, treble clef staves or bass clef staves */
   staves: 'all' | 'treble' | 'bass';
   /** add the octave number (C6) */
@@ -32,11 +35,11 @@ const BOTTOM_LINE: Record<Clef, number> = {
 
 const diatonic = (p: Pitch) => p.octave * 7 + STEPS.indexOf(p.step);
 
-/** Ledger lines a note needs on a staff whose bottom line is `bottom` (both diatonic numbers). */
-export function ledgerLines(d: number, bottom: number): number {
+/** Lines and spaces a note is past the outer line of a staff whose bottom line is `bottom` (both diatonic numbers). */
+export function stepsOff(d: number, bottom: number): number {
   const top = bottom + 8;
-  if (d > top) return Math.floor((d - top) / 2);
-  if (d < bottom) return Math.floor((bottom - d) / 2);
+  if (d > top) return d - top;
+  if (d < bottom) return bottom - d;
   return 0;
 }
 
@@ -75,7 +78,7 @@ export function noteNames(score: Score, opts: NoteNameOptions): Map<string, Note
           const order = e.pitches.map((p, i) => ({ p, i, d: diatonic(p) })).sort((a, b) => a.d - b.d || a.p.alter - b.p.alter);
           const names: NoteName[] = [];
           order.forEach(({ p, d }, rank) => {
-            if (opts.ledger === 0 || ledgerLines(d + move, BOTTOM_LINE[clef]) >= opts.ledger) names.push({ rank, text: noteNameText(p, opts.octave) });
+            if (opts.steps === 0 || stepsOff(d + move, BOTTOM_LINE[clef]) >= opts.steps) names.push({ rank, text: noteNameText(p, opts.octave) });
           });
           if (names.length) out.set(e.id, names);
         }

@@ -109,7 +109,7 @@ export const DEFAULT_SETTINGS: Settings = {
   extrasMarks: true,
   showChords: true,
   showLyrics: true,
-  noteNames: { on: false, ledger: 3, staves: 'all', octave: false },
+  noteNames: { on: false, steps: 4, staves: 'all', octave: false },
   compatPreset: 'openrouter',
   compatBaseUrl: 'https://openrouter.ai/api/v1',
   compatKey: '',

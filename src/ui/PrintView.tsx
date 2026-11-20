@@ -5,9 +5,13 @@ import { nativeApp } from '../native';
 import { toMusicXML } from '../model/musicxml';
 import { Score, cloneScore } from '../model/types';
 import { keyName } from '../model/pitch';
+import { NoteNameOptions, noteNames as nameNotes } from '../model/noteNames';
+import { drawNoteNames, noteGroups } from './osmdNotes';
 
 interface Props {
   score: Score;
+  /** how to name notes far off the staff (from Settings) */
+  noteNames: NoteNameOptions;
   onBack: () => void;
 }
 
@@ -17,13 +21,14 @@ const PAPER_PX: Record<Paper, { w: number; h: number; css: string }> = {
   A4: { w: 794, h: 1123, css: 'A4' },
 };
 
-export function PrintView({ score, onBack }: Props) {
+export function PrintView({ score, noteNames, onBack }: Props) {
   const [paper, setPaper] = useState<Paper>(() => (navigator.language?.startsWith('en-US') || navigator.language === 'en' ? 'Letter' : 'A4'));
   const [scale, setScale] = useState(0.85);
   const [showTitle, setShowTitle] = useState(true);
   const [chords, setChords] = useState(true);
   const [lyrics, setLyrics] = useState(true);
   const [measureNumbers, setMeasureNumbers] = useState(true);
+  const [names, setNames] = useState(noteNames.on);
   const [partNames, setPartNames] = useState(score.parts.length > 1);
   const [parts, setParts] = useState(() => score.parts.map((p) => !p.hidden));
   const [pages, setPages] = useState(0);
@@ -60,10 +65,12 @@ export function PrintView({ score, onBack }: Props) {
     let cancelled = false;
     const t = setTimeout(async () => {
       try {
-        await osmd.load(toMusicXML(s, { chordText: true }).xml);
+        const { xml, eventKeys } = toMusicXML(s, { chordText: true });
+        await osmd.load(xml);
         if (cancelled) return;
         osmd.zoom = scale;
         osmd.render();
+        if (names) drawNoteNames(host, noteGroups(osmd, eventKeys), nameNotes(s, { ...noteNames, on: true }));
         const svgs = host.querySelectorAll('svg');
         svgs.forEach((svg) => svg.parentElement?.classList.add('print-page'));
         setPages(svgs.length);
@@ -78,7 +85,7 @@ export function PrintView({ score, onBack }: Props) {
       clearTimeout(t);
       osmd.clear();
     };
-  }, [score, paper, scale, showTitle, chords, lyrics, measureNumbers, partNames, parts]);
+  }, [score, paper, scale, showTitle, chords, lyrics, measureNumbers, partNames, parts, names, noteNames]);
 
   const hasChords = score.measures.some((m) => m.chords?.length);
   const hasLyrics = score.measures.some((m) => m.staves.some((st) => st.voices.some((v) => v.some((e) => e.lyric))));
@@ -107,6 +114,7 @@ export function PrintView({ score, onBack }: Props) {
         {hasChords && <label className="check"><input type="checkbox" checked={chords} onChange={(e) => setChords(e.target.checked)} /> Chord symbols</label>}
         {hasLyrics && <label className="check"><input type="checkbox" checked={lyrics} onChange={(e) => setLyrics(e.target.checked)} /> Lyrics</label>}
         <label className="check"><input type="checkbox" checked={measureNumbers} onChange={(e) => setMeasureNumbers(e.target.checked)} /> Measure numbers</label>
+        <label className="check"><input type="checkbox" checked={names} onChange={(e) => setNames(e.target.checked)} /> Names of far-off notes</label>
         {score.parts.length > 1 && (
           <>
             <label className="check"><input type="checkbox" checked={partNames} onChange={(e) => setPartNames(e.target.checked)} /> Part names</label>

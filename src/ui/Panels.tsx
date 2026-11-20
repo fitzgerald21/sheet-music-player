@@ -1,7 +1,7 @@
 import { ReactNode, useEffect, useRef, useState } from 'react';
 import { Icon } from './Icons';
 import { INSTRUMENTS } from '../audio/engine';
-import { Clef, InstrumentId, Measure, Navigation, Score, cloneScore } from '../model/types';
+import { Clef, InstrumentId, Measure, Navigation, Score, STEPS, cloneScore } from '../model/types';
 import { INTERVAL_NAMES, octaveShift, transposeScore } from '../model/transpose';
 import { keyName, transposeKey, keyTonicPitchClass } from '../model/pitch';
 import { Settings, Engine } from '../storage';
@@ -297,6 +297,14 @@ export function MeasurePanel({ score, m0, m1, onUpdate, onInsert, onDelete, onCl
 }
 
 // ---------------- Settings ----------------
+const ORDINAL = ['', '1st', '2nd', '3rd', '4th', '5th'];
+/** e.g. "2nd ledger line (C6 / C2)": `n` lines and spaces past the staff, with the note it is above the treble and below the bass staff */
+function stepsLabel(n: number): string {
+  const name = (d: number) => `${STEPS[d % 7]}${Math.floor(d / 7)}`;
+  const where = n === 1 ? 'Just off the staff' : n % 2 ? `Space past the ${ORDINAL[(n - 1) / 2]} ledger line` : `${ORDINAL[n / 2]} ledger line`;
+  return `${where} (${name(5 * 7 + 3 + n)} / ${name(2 * 7 + 4 - n)})`;
+}
+
 export function SettingsPanel({ settings, onChange, onClose, serverKey, audiveris }: { settings: Settings; onChange: (s: Settings) => void; onClose: () => void; serverKey: boolean; audiveris?: boolean }) {
   const [show, setShow] = useState(false);
   const preset = COMPAT_PRESETS.find((p) => p.id === settings.compatPreset) ?? COMPAT_PRESETS[0];
@@ -424,25 +432,23 @@ export function SettingsPanel({ settings, onChange, onClose, serverKey, audiveri
       <label className="check"><input type="checkbox" checked={names.on} onChange={(e) => setNames({ on: e.target.checked })} /> Write the letter name next to notes far above or below the staff</label>
       {names.on && (
         <>
-          <div className="field-grid">
-            <div className="field">
-              <label htmlFor="nn-ledger">Which notes</label>
-              <select id="nn-ledger" value={names.ledger} onChange={(e) => setNames({ ledger: Number(e.target.value) })}>
-                {[1, 2, 3, 4, 5].map((n) => <option key={n} value={n}>{n} ledger line{n > 1 ? 's' : ''} or more off the staff</option>)}
-                <option value={0}>Every note</option>
-              </select>
-            </div>
-            <div className="field">
-              <label htmlFor="nn-staves">On</label>
-              <select id="nn-staves" value={names.staves} onChange={(e) => setNames({ staves: e.target.value as NoteNameOptions['staves'] })}>
-                <option value="all">Both staves</option>
-                <option value="treble">Treble clef only</option>
-                <option value="bass">Bass clef only</option>
-              </select>
-            </div>
+          <div className="field">
+            <label htmlFor="nn-steps">Name notes from</label>
+            <select id="nn-steps" value={names.steps} onChange={(e) => setNames({ steps: Number(e.target.value) })}>
+              {[1, 2, 3, 4, 5, 6, 7, 8, 9, 10].map((n) => <option key={n} value={n}>{stepsLabel(n)}</option>)}
+              <option value={0}>Every note</option>
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="nn-staves">On</label>
+            <select id="nn-staves" value={names.staves} onChange={(e) => setNames({ staves: e.target.value as NoteNameOptions['staves'] })}>
+              <option value="all">Both staves</option>
+              <option value="treble">Treble clef only</option>
+              <option value="bass">Bass clef only</option>
+            </select>
           </div>
           <label className="check"><input type="checkbox" checked={names.octave} onChange={(e) => setNames({ octave: e.target.checked })} /> Add the octave number (C6 instead of C; middle C is C4)</label>
-          <p className="hint">Ledger lines are the short lines drawn above or below the staff. Notes under an 8va line are counted where they’re drawn.</p>
+          <p className="hint">Ledger lines are the short lines drawn above or below the staff. Each choice names that note and everything further out; the examples are above the treble staff and below the bass staff, and notes below the treble or above the bass are counted the same way. Notes under an 8va line are counted where they’re drawn.</p>
         </>
       )}
       <h3 className="sub-h">About</h3>
